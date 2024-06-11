@@ -55,13 +55,13 @@ endif()
 #-----------------------------------------------#
 #                     openCV                    #
 #-----------------------------------------------#
-find_package(OpenCV REQUIRED)
+#find_package(OpenCV REQUIRED)
 
-message(STATUS "OpenCV library status:" )
-message(STATUS "    config: ${OpenCV_DIR}" )
-message(STATUS "    version: ${OpenCV_VERSION}" )
-message(STATUS "    include path: ${OpenCV_INCLUDE_DIRS}" )
-include_directories(${OpenCV_INCLUDE_DIRS})
+#message(STATUS "OpenCV library status:" )
+#message(STATUS "    config: ${OpenCV_DIR}" )
+#message(STATUS "    version: ${OpenCV_VERSION}" )
+#message(STATUS "    include path: ${OpenCV_INCLUDE_DIRS}" )
+#include_directories(${OpenCV_INCLUDE_DIRS})
 
 # CUDA compile options
 set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -gencode arch=compute_50,code=sm_50")
@@ -71,10 +71,10 @@ set(SOURCES
 )
 
 add_executable(unittest ${SOURCES})
-target_link_libraries(unittest gtest gtest_main fftw3 OpenMP::OpenMP_CXX ${OpenCV_LIBS} ${CUDA_LIBRARIES} cufft)
+target_link_libraries(unittest gtest gtest_main fftw3 OpenMP::OpenMP_CXX ${CUDA_LIBRARIES} cufft)
 
-add_executable(test_opencv ./utest/test_opencv.cu)
-target_link_libraries(test_opencv ${OpenCV_LIBS} ${CUDA_LIBRARIES} cufft)
+#add_executable(test_opencv ./utest/test_opencv.cu)
+#target_link_libraries(test_opencv ${OpenCV_LIBS} ${CUDA_LIBRARIES} cufft)
 
 include(GoogleTest)
 gtest_discover_tests(unittest)
