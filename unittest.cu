@@ -6,7 +6,7 @@
 #include <random>
 
 
-/*TEST(CUDAfunction, test_cuMath_vec) {
+TEST(CUDAfunction, test_cuMath_vec) {
     cuMath::cuVec v(7, 2);
     auto a = v[0];
 
@@ -14,10 +14,10 @@
 
     EXPECT_EQ(a, 2);
     EXPECT_EQ(vec[0], 77);
-}*/
+}
 
 
-TEST(nsight, fft) {
+/*TEST(nsight, fft) {
     int N_ = 5000000;
     testFFT fft;
 
@@ -36,7 +36,7 @@ TEST(nsight, fft) {
         elapse_t.push_back(fft.run(data));
     }
     
-}
+}*/
 
 TEST(opencv, open) {
     
