@@ -75,5 +75,6 @@ set(SOURCES
 add_executable(unittest ${SOURCES})
 target_link_libraries(unittest gtest gtest_main ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES} ${CUDA_CUSOLVER_LIBRARIES} cublas cusolver)
 
+
 include(GoogleTest)
 gtest_discover_tests(unittest)

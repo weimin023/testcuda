@@ -33,30 +33,6 @@ TEST(CUDAfunction, test_EVD) {
         throw std::runtime_error("Failed to compute covariance matrix");
     }
 
-    // NOW RUN THE EVD
-    evd2.exec(m_cov);
-
-    // move the values to the host for verification 
-    auto B_cov = m_cov.to_host();
-    auto B_eigen_value = evd2.V().to_host();
-    auto B_eigen_vec = evd2.W().to_host();
-
-    // reshape the matrixes to 2D for verification
-    int n = 3;
-    std::vector<std::vector<cuDoubleComplex>> cuda_cov2d(n, std::vector<cuDoubleComplex>(n, {0, 0}));
-    std::vector<std::vector<cuDoubleComplex>> cuda_eigen_vec(n, std::vector<cuDoubleComplex>(n, {0, 0}));
-    std::vector<std::vector<cuDoubleComplex>> cuda_eigen_val(n, std::vector<cuDoubleComplex>(n, {0, 0}));
-    for (int i=0;i<n;++i) {
-        for (int j=0;j<n;++j) {
-            int idx = j + i*n;
-            cuda_cov2d[i][j] = B_cov[idx];
-            cuda_eigen_vec[i][j].x = B_eigen_vec[idx];
-            if (i==j) {
-                cuda_eigen_val[i][j] = B_eigen_value[idx];
-            }
-        }
-    }
-
     // AV = VD (covariance mat * eigen vector = eigen vector * eigen values)
     auto left = matrixMultiply(cuda_cov2d, cuda_eigen_vec);
     auto right = matrixMultiply(cuda_eigen_vec, cuda_eigen_val);
