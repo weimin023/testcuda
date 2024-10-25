@@ -10,6 +10,19 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_BUILD_TYPE Debug)
 
+#-----------------------------------------------#
+#                     ARMPL                     #
+#-----------------------------------------------#
+# Specify the ARMPL installation path
+set(ARMPL_DIR "/opt/arm/armpl_24.10_gcc")
+
+# Include directories
+include_directories(${ARMPL_DIR}/include)
+
+# Link directories
+link_directories(${ARMPL_DIR}/lib)
+
+
 find_package(OpenMP REQUIRED)
 #-----------------------------------------------#
 #                     CUDA                      #
@@ -88,7 +101,7 @@ add_executable(test_graph3 test_graph3.cu)
 target_link_libraries(test_graph3 ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES} ${CUDA_CUSOLVER_LIBRARIES} cublas cusolver)
 
 add_executable(test_armpl test_armpl.cu)
-target_link_libraries(test_armpl ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES} ${CUDA_CUSOLVER_LIBRARIES} cublas cusolver)
+target_link_libraries(test_armpl ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES} ${CUDA_CUSOLVER_LIBRARIES} cublas cusolver armpl_lp64_mp pthread m)
 
 include(GoogleTest)
 gtest_discover_tests(unittest)

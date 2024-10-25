@@ -5,6 +5,7 @@
 #include <chrono>
 #include <thrust/host_vector.h>
 #include "armpl.h"
+#include <complex.h> 
 
 #define N 8
 
@@ -95,7 +96,7 @@ cuFloatComplex h_cov[64] = {
         make_cuFloatComplex(171.296f, -3648.69f), make_cuFloatComplex(3863.89f, -2.28193e-06f)
     };
 
-armpl_singlecomplex_t h_cov[N * N] = {
+armpl_singlecomplex_t h_cov_arm[N * N] = {
     {4140.65f, -2.24197e-06f}, {137.897f, 3938.01f}, {-158.647f, -1241.86f}, {-1936.52f, 2616.06f},
     {-743.871f, 2664.88f}, {623.323f, -4050.98f}, {-1115.17f, 1268.56f}, {-1067.13f, 133.398f},
     {137.897f, -3938.01f}, {4154.02f, 3.32665e-06f}, {-1563.14f, -967.872f}, {2961.04f, 2489.75f},
@@ -115,8 +116,6 @@ armpl_singlecomplex_t h_cov[N * N] = {
 };
 
 void ver_armpl() {
-    const char jobz = 'V';
-    const char uplo = 'U';
     armpl_int_t n = N;
     armpl_int_t kd = N - 1;
     armpl_int_t ldab = N;
@@ -129,9 +128,57 @@ void ver_armpl() {
     armpl_singlecomplex_t work_query;
     float rwork_query;
 
-    chbevd_2stage_(&jobz, &uplo, &n, &kd, h_cov, &ldab, w, z, &n,
+    chbevd_2stage_("V", "U", &n, &kd, h_cov_arm, &ldab, w, z, &n,
                    &work_query, &lwork, &rwork_query, &lrwork, NULL, &liwork, &info);
 
+    if (info != 0) {
+        // Handle error, such as logging or returning
+        fprintf(stderr, "Error in workspace query: %d\n", info);
+        return;
+    }
+
+    // Allocate workspace based on the query results
+    lwork = (armpl_int_t)work_query; // Get the size of work
+    lrwork = (armpl_int_t)rwork_query; // Get the size of rwork
+    liwork = 5*N/* allocate size based on needs */; // Determine and allocate size for iwork
+
+    // Allocate work, rwork, and iwork arrays
+    armpl_singlecomplex_t *work = (armpl_singlecomplex_t *)malloc(lwork * sizeof(armpl_singlecomplex_t));
+    float *rwork = (float *)malloc(lrwork * sizeof(float));
+    armpl_int_t *iwork = (armpl_int_t *)malloc(liwork * sizeof(armpl_int_t));
+
+    // Second call to actually perform the computation
+    chbevd_2stage_("V", "U", &n, &kd, h_cov_arm, &ldab, w, z, &n,
+                   work, &lwork, rwork, &lrwork, iwork, &liwork, &info);
+
+    // Check for errors in the actual computation
+    if (info != 0) {
+        fprintf(stderr, "Error in computation: %d\n", info);
+        free(work);
+        free(rwork);
+        free(iwork);
+        return;
+    }
+
+    // If successful, print eigenvalues and eigenvectors
+    printf("Eigenvalues:\n");
+    for (int i = 0; i < n; i++) {
+        printf("%f\n", w[i]);
+    }
+
+    printf("Eigenvectors:\n");
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+	    //armpl_singlecomplex_t tmp = z[i * n + j];
+            //printf("(%f, %f) ", tmp.real, tmp.imag);
+        }
+        //printf("\n");
+    }
+
+    // Free allocated memory
+    free(work);
+    free(rwork);
+    free(iwork);
 }
 
 void ver_cuda(cuFloatComplex *m_eigen_vec, float *m_eigen_val, const cuFloatComplex *d_cov, cusolverDnHandle_t &m_cusolverH) {
