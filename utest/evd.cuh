@@ -1,38 +1,49 @@
 #pragma once
 #include <cuda_runtime.h>
 #include <cusolverDn.h>
-#include <vector>
-#include <stdexcept>
-#include <cublas_v2.h>
-#include "misc.cuh"
 
-template <typename T, typename D>
-class cuSyEVD {
-public:
-    cuSyEVD(uint n) : N(n) {
-        preprocess();
-    }
-    ~cuSyEVD() {
-        cusolverDnDestroy(cusolverH);
-        m_eigen_vec.free();
-        m_eigen_value.free();
-        cudaFree(d_work);
-        cudaFree(devInfo);
-    }
+#include <thrust/device_vector.h>
 
-    const auto &V() { return m_eigen_vec; }
-    const auto &W() { return m_eigen_value; }
+namespace TronCUDA {
+    template <typename T, typename D>
+    class cuSyEVD {
+    public:
+        cuSyEVD() {
+            cusolverDnCreate(&cusolverH);
+        }
+        ~cuSyEVD() {
+            cusolverDnDestroy(cusolverH);
+            cudaFree(d_work);
+            cudaFree(devInfo);
+        }
 
-    void exec(cuData_t<T> &A);
+        void setup(int n, cudaStream_t stream = 0) {
+            N = n;
+            m_eigen_vec.resize(N*N);
+            m_eigen_vec_row_majored.resize(N*N);
+            m_eigen_value.resize(N);
+            (cudaMalloc(&devInfo, sizeof(int)));
+            m_stream = stream;
+            (cusolverDnSetStream(cusolverH, m_stream));
+            preprocess();
+        }
+        const auto &GetEigenVec() { return m_eigen_vec_row_majored; }
+        const auto &GetEigenVal() { return m_eigen_value; }
 
-private:
-    void preprocess();
+        void exec(const thrust::device_vector<T> &d_data);
+    private:
+        void preprocess();
+        void toRow();
 
-    cusolverDnHandle_t cusolverH;
-    cuData_t<T> m_eigen_vec;
-    cuData_t<D> m_eigen_value;
-    T *d_work;
-    int *devInfo;
-    int lwork = 0;
-    int N;
-};
+        cudaStream_t m_stream;
+        cusolverDnHandle_t cusolverH;
+        thrust::device_vector<T> m_eigen_vec;
+        thrust::device_vector<T> m_eigen_vec_row_majored;
+        thrust::device_vector<D> m_eigen_value;
+
+        T *d_work;
+        int *devInfo;
+        int lwork = 0;
+        int N;
+    };
+}

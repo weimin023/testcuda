@@ -69,7 +69,7 @@ set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -gencode arch=compute_50,code=sm_50")
 set(SOURCES
     unittest.cu
     ./utest/misc.cu
-    ./utest/evd.cpp
+    ./utest/evd.cu
 )
 
 add_executable(unittest ${SOURCES})
@@ -77,6 +77,18 @@ target_link_libraries(unittest gtest gtest_main ${CUDA_LIBRARIES} ${CUDA_CUBLAS_
 
 add_executable(gemm_naive gemm_naive.cu)
 target_link_libraries(gemm_naive ${CUDA_LIBRARIES})
+
+add_executable(test_graph test_graph.cu ./utest/evd.cu)
+target_link_libraries(test_graph ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES} ${CUDA_CUSOLVER_LIBRARIES} cublas cusolver)
+
+add_executable(test_graph2 test_graph2.cu)
+target_link_libraries(test_graph ${CUDA_LIBRARIES})
+
+add_executable(test_graph3 test_graph3.cu)
+target_link_libraries(test_graph3 ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES} ${CUDA_CUSOLVER_LIBRARIES} cublas cusolver)
+
+add_executable(test_armpl test_armpl.cu)
+target_link_libraries(test_armpl ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES} ${CUDA_CUSOLVER_LIBRARIES} cublas cusolver)
 
 include(GoogleTest)
 gtest_discover_tests(unittest)
