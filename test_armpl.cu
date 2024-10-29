@@ -125,6 +125,80 @@ lapack_complex_float h_cov_arm[N * N] = {
     {-1725.97f, -2476.39f}, {-198.559f, 1266.46f}, {171.296f, -3648.69f}, {3863.89f, -2.28193e-06f}
 };
 
+class evaluate_evd {
+public:
+    evaluate_evd() {
+	cusolverDnCreate(&m_cusolverH);
+
+	cudaMalloc((void**)&d_eigen_vec, N * N * sizeof(cuFloatComplex));
+        cudaMalloc((void**)&d_eigen_val, N * sizeof(float));
+
+        CHECK_CUDA(cudaMalloc(&devInfo, sizeof(int)));
+        CHECK_CUSOLVER(cusolverDnCheevd_bufferSize(m_cusolverH, CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_UPPER, N, d_eigen_vec, N, d_eigen_val, &lwork));
+        CHECK_CUDA(cudaMalloc(&d_work, lwork * sizeof(cuComplex)));
+    
+	t_cuda  = 0;
+        t_armpl = 0;
+    }
+    void run_cuda(const cuFloatComplex *d_cov) {
+        CHECK_CUDA(cudaMemcpy(d_eigen_vec, d_cov, N * N * sizeof(cuFloatComplex), cudaMemcpyHostToDevice));
+    
+        auto start = std::chrono::high_resolution_clock::now();
+        CHECK_CUSOLVER(cusolverDnCheevd(m_cusolverH, CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_UPPER, N, d_eigen_vec, N, d_eigen_val, d_work, lwork, devInfo));
+        auto end = std::chrono::high_resolution_clock::now();
+
+	t_cuda += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+
+        int info;
+        CHECK_CUDA(cudaMemcpy(&info, devInfo, sizeof(int), cudaMemcpyDeviceToHost));
+        if (info != 0) {
+            std::cerr << "Error: cuSOLVER operation failed with info = " << info << std::endl;
+        }
+
+	thrust::host_vector<cuFloatComplex> h_eigen_vec(N*N);
+        thrust::host_vector<float> h_eigen_val(N);
+        cudaMemcpy(h_eigen_vec.data(), d_eigen_vec, N * N * sizeof(cuFloatComplex), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_eigen_val.data(), d_eigen_val, N * sizeof(float), cudaMemcpyDeviceToHost);
+
+        //std:: cout << "=========CHECK EIGENVALS=========" << std::endl;
+        //for (int i=0;i<N;++i) {
+        //    std::cout << h_eigen_val[i] << std::endl;
+        //}
+
+    }
+    void run_armpl(const lapack_complex_float *cov_arm) {
+        lapack_complex_float cov_in[N*N];
+	std::copy(cov_arm, cov_arm + (N * N), cov_in);
+
+	auto start = std::chrono::high_resolution_clock::now();
+	CHECK_LAPACK(LAPACKE_cheev(LAPACK_ROW_MAJOR, 'V', 'U', N, cov_in, N, w));
+	auto end = std::chrono::high_resolution_clock::now();
+
+	t_armpl += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+
+        //std::cout<<"==========LAPACK:"<<std::endl;
+        //for (int i=0;i<N;++i) {
+        //    std::cout<<w[i]<<std::endl;
+        //}
+    }
+
+    float getCudaTime() { return t_cuda; }
+    float getArmplTime() { return t_armpl; }
+private:
+    float w[N];
+
+    cuFloatComplex *d_work;
+    int *devInfo;
+    int lwork = 0;
+    cusolverDnHandle_t m_cusolverH;
+
+    cuFloatComplex *d_eigen_vec;
+    float *d_eigen_val;
+
+    float t_cuda  = 0;
+    float t_armpl = 0;
+};
+
 void ver_armpl(lapack_complex_float *cov_arm) {
     float w[N];
     CHECK_LAPACK(LAPACKE_cheev(LAPACK_ROW_MAJOR, 'V', 'U', N, cov_arm, N, w));
@@ -158,28 +232,23 @@ void ver_cuda(cuFloatComplex *m_eigen_vec, float *m_eigen_val, const cuFloatComp
 }
 
 int main() {
-    cusolverDnHandle_t m_cusolverH;
-    cusolverDnCreate(&m_cusolverH);
 
-    cuFloatComplex *d_eigen_vec;
-    float *d_eigen_val;
-    
-    cudaMalloc((void**)&d_eigen_vec, N * N * sizeof(cuFloatComplex));
-    cudaMalloc((void**)&d_eigen_val, N * sizeof(float));
+    evaluate_evd EV;
+    int trials = 100;
 
-    ver_cuda(d_eigen_vec, d_eigen_val, h_cov, m_cusolverH);
-
-    thrust::host_vector<cuFloatComplex> h_eigen_vec(N*N);
-    thrust::host_vector<float> h_eigen_val(N);
-    cudaMemcpy(h_eigen_vec.data(), d_eigen_vec, N * N * sizeof(cuFloatComplex), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_eigen_val.data(), d_eigen_val, N * sizeof(float), cudaMemcpyDeviceToHost);
-
-    std:: cout << "=========CHECK EIGENVALS=========" << std::endl;
-    for (int i=0;i<N;++i) {
-        std::cout << h_eigen_val[i] << std::endl;
+    float t_cuda = 0, t_arm = 0;
+    for (int i=0;i<trials;++i) {
+        EV.run_cuda(h_cov);
+        EV.run_armpl(h_cov_arm);
     }
 
-    ver_armpl(h_cov_arm);
+    t_cuda = EV.getCudaTime();
+    t_arm = EV.getArmplTime();
 
+    std::cout<<"CUDA AVG. TIME:"<<std::endl;
+    std::cout<<t_cuda/trials<<std::endl;
+
+    std::cout<<"ARM AVG. TIME:"<<std::endl;
+    std::cout<<t_arm/trials<<std::endl;
     return 0;
 }
