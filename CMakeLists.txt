@@ -102,8 +102,11 @@ target_link_libraries(test_graph ${CUDA_LIBRARIES})
 add_executable(test_graph3 test_graph3.cu)
 target_link_libraries(test_graph3 ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES} ${CUDA_CUSOLVER_LIBRARIES} cublas cusolver)
 
-add_executable(test_armpl test_armpl.cu)
-target_link_libraries(test_armpl ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES} ${CUDA_CUSOLVER_LIBRARIES} cublas cusolver armpl_lp64_mp pthread m)
+#add_executable(test_armpl test_armpl.cu)
+#target_link_libraries(test_armpl ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES} ${CUDA_CUSOLVER_LIBRARIES} cublas cusolver armpl_lp64_mp pthread m)
+
+add_executable(test_cuMul test_cuMul.cu)
+target_link_libraries(test_cuMul ${CUDA_LIBRARIES})
 
 include(GoogleTest)
 gtest_discover_tests(unittest)
