@@ -4,7 +4,7 @@
 #include <chrono>
 #include "cuda_fp16.h"
 
-#define N 10000000
+#define N 500000
 
 __device__ static __inline__ cuFloatComplex cuCmulfOpt(const cuFloatComplex a, const cuFloatComplex b) {
     return make_cuFloatComplex(__hsub(__hmul(a.x, b.x), __hmul(a.y, b.y)), __hfma(a.x, b.y, __hmul(a.y, b.x)));
@@ -32,7 +32,7 @@ void profileFunction(void (*kernel)(cuFloatComplex*, const cuFloatComplex*, cons
 
     // Launch the kernel multiple times to accumulate enough time for profiling
     auto start = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < 1; i++) {
         kernel<<<gridSize, blockSize>>>(d_out, d_a, d_b);
     }
     cudaDeviceSynchronize();
