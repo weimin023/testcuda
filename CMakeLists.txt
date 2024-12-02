@@ -108,5 +108,11 @@ target_link_libraries(test_graph3 ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES} ${C
 add_executable(test_cuMul test_cuMul.cu)
 target_link_libraries(test_cuMul ${CUDA_LIBRARIES})
 
+add_executable(test_conflict test_conflict.cu)
+target_link_libraries(test_conflict ${CUDA_LIBRARIES})
+
+add_executable(test_topk test_topk.cu)
+target_link_libraries(test_topk ${CUDA_LIBRARIES})
+
 include(GoogleTest)
 gtest_discover_tests(unittest)
