@@ -114,5 +114,14 @@ target_link_libraries(test_conflict ${CUDA_LIBRARIES})
 add_executable(test_topk test_topk.cu)
 target_link_libraries(test_topk ${CUDA_LIBRARIES})
 
+add_executable(test_maxFilter test_maxFilter.cu)
+target_link_libraries(test_maxFilter ${CUDA_LIBRARIES})
+
+add_executable(test_sort test_sort.cu)
+target_link_libraries(test_sort ${CUDA_LIBRARIES})
+
+add_executable(test_tensorCore test_tensorCore.cu)
+target_link_libraries(test_tensorCore ${CUDA_LIBRARIES})
+
 include(GoogleTest)
 gtest_discover_tests(unittest)

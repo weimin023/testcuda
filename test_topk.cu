@@ -78,15 +78,6 @@ __global__ void top_k_gpu_opt(float* input, int length, int k, float* output, in
     }
     __syncthreads();
 
-    /*for (int stride = numThreads / 2; stride > 0; stride >>= 1) {
-        if (tid < stride) {
-            float* next_buffer = shared_buffer + (tid + stride) * k;
-            int* next_buffer_idx = reinterpret_cast<int*>(shared_buffer + numThreads * k) + (tid + stride) * k;
-            mergeTwoK(buffer, buffer_idx, next_buffer, next_buffer_idx, k);
-        }
-        __syncthreads();
-    }*/
-
     if (numThreads >= 1024) {
         if (tid < 512) {
             float* next_buffer = shared_buffer + (tid + 512) * k;
@@ -274,6 +265,7 @@ int main() {
 
     printf("N: %d, threads: %d, blocks: %d\n", n, threadsPerBlock, blocksPerGrid);
 
+    top_k_gpu<<<blocksPerGrid, threadsPerBlock, sharedMemSize>>>(d_vec.data().get(), n, k, d_res_first.data().get(), d_idx_first.data().get());
     top_k_gpu_opt<128><<<blocksPerGrid, threadsPerBlock, sharedMemSize>>>(d_vec.data().get(), n, k, d_res_first.data().get(), d_idx_first.data().get());
     top_k_gpu_final<<<1, threadsPerBlock, sharedMemSize>>>(d_res_first.data().get(), d_idx_first.data().get(), blocksPerGrid*k, k, d_res_final.data().get(), d_idx_final.data().get());
     
