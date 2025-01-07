@@ -32,7 +32,8 @@ find_package(OpenMP REQUIRED)
 find_package(CUDA 12.3 REQUIRED)
 
 # Set CUDA compiler flags
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -std=c++17 --extended-lambda -Xcudafe --diag_suppress=997")
+set(CMAKE_CUDA_FLAGS_DEBUG "-std=c++17 --extended-lambda -Xcudafe --diag_suppress=997 -g -G")
+set(CMAKE_CUDA_FLAGS_RELEASE "-O3 -std=c++17 --extended-lambda -Xcudafe --diag_suppress=997 -DNDEBUG")
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include_directories(
@@ -77,9 +78,6 @@ include_directories(${gtest_SOURCE_DIR}/include ${gtest_SOURCE_DIR})
 #message(STATUS "    version: ${OpenCV_VERSION}" )
 #message(STATUS "    include path: ${OpenCV_INCLUDE_DIRS}" )
 #include_directories(${OpenCV_INCLUDE_DIRS})
-
-# CUDA compile options
-set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -gencode arch=compute_50,code=sm_50")
 
 set(SOURCES
     unittest.cu
