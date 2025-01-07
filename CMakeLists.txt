@@ -123,5 +123,8 @@ target_link_libraries(test_sort ${CUDA_LIBRARIES})
 add_executable(test_tensorCore test_tensorCore.cu)
 target_link_libraries(test_tensorCore ${CUDA_LIBRARIES})
 
+add_executable(test_compare_cuda_tensor test_compare_cuda_tensor.cu)
+target_link_libraries(test_compare_cuda_tensor ${CUDA_LIBRARIES})
+
 include(GoogleTest)
 gtest_discover_tests(unittest)
