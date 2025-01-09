@@ -32,8 +32,8 @@ find_package(OpenMP REQUIRED)
 find_package(CUDA 12.3 REQUIRED)
 
 # Set CUDA compiler flags
-set(CMAKE_CUDA_FLAGS_DEBUG "-std=c++17 --extended-lambda -Xcudafe --diag_suppress=997 -g -G")
-set(CMAKE_CUDA_FLAGS_RELEASE "-O3 -std=c++17 --extended-lambda -Xcudafe --diag_suppress=997 -DNDEBUG")
+set(CMAKE_CUDA_FLAGS_DEBUG "-std=c++17 --extended-lambda -Xcudafe --diag_suppress=997 -g -G -lineinfo")
+set(CMAKE_CUDA_FLAGS_RELEASE "-O3 -std=c++17 --extended-lambda -Xcudafe --diag_suppress=997 -DNDEBUG -lineinfo")
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include_directories(
