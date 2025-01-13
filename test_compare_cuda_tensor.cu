@@ -157,9 +157,9 @@ __global__ void wmmaNaiveKernel(const half *__restrict__ A, const half *__restri
 
 int main() {
 
-    int M = 2048;
-    int K = 2048;
-    int N = 2048;
+    int M = 1024;
+    int K = 1024;
+    int N = 1024;
 
     std::cout << "Matrix Sizes" << std::endl;
     std::cout << "M: " << M << std::endl;
