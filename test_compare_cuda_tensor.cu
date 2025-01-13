@@ -81,7 +81,7 @@ __global__ void __launch_bounds__(1024) gemm_CUDA(float *__restrict__ c, const T
     
     const int bx = blockIdx.x;
     const int by = blockIdx.y;
-    const int TILE_SIZE = 16;
+    const int TILE_SIZE = 32;
 
     const int tx = threadIdx.x;
     const int ty = threadIdx.y;
@@ -118,6 +118,19 @@ __global__ void __launch_bounds__(1024) gemm_CUDA(float *__restrict__ c, const T
         c[row * N + col] = sum;
     }
 }
+
+
+template<typename T>
+__global__ void __launch_bounds__(256) gemm_CUDA_reuse_thread(float *__restrict__ c, const T *__restrict__ a, const T *__restrict__ b, int M, int N, int K) {
+    const int TILE_SIZE = 32;
+    
+    const int bx = blockIdx.x;
+    const int by = blockIdx.y;
+
+    const int tx = threadIdx.x;
+    const int ty = threadIdx.y;
+}
+    
 
 #define WMMA_M 16
 #define WMMA_N 16
@@ -193,7 +206,7 @@ int main() {
     auto cpu_end = std::chrono::high_resolution_clock::now();
     auto t_cpu = std::chrono::duration_cast<std::chrono::microseconds>(cpu_end - cpu_start).count();*/
 
-    dim3 threadNum(16, 16);
+    dim3 threadNum(32, 32);
     dim3 blockNum((M + threadNum.x - 1)/threadNum.x, (N + threadNum.y - 1)/threadNum.y);
 
     cudaEvent_t cuda_start, cuda_end;
