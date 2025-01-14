@@ -119,16 +119,63 @@ __global__ void __launch_bounds__(1024) gemm_CUDA(float *__restrict__ c, const T
     }
 }
 
+#define OFFSET(row, col, stride) ((row) * (stride) + (col))
+#define CEIL_DIV(M, N) (((M) + (N - 1)) / (N))
 
-template<typename T>
-__global__ void __launch_bounds__(256) gemm_CUDA_reuse_thread(float *__restrict__ c, const T *__restrict__ a, const T *__restrict__ b, int M, int N, int K) {
-    const int TILE_SIZE = 32;
-    
-    const int bx = blockIdx.x;
-    const int by = blockIdx.y;
+template <const int BM, const int BN, const int BK, const int TM, const int TN>
+__global__ void __launch_bounds__(256) tile_2d_kernel(int M, int N, int K, __half *A, __half *B, float *C) {
+    __shared__ __half As[BM][BK];
+    __shared__ __half Bs[BK][BN];
+    float val[TM][TN] = {0.};
+    int num_shared_block = CEIL_DIV(K, BK); // or CEIL_DIV(K, BN);
+    A = &A[OFFSET(blockIdx.y * BM, 0, K)];
+    B = &B[OFFSET(0, blockIdx.x * BN, N)];
+    C = &C[OFFSET(blockIdx.y * BM, blockIdx.x * BN, N)];
 
-    const int tx = threadIdx.x;
-    const int ty = threadIdx.y;
+    for (int i = 0; i < num_shared_block; ++i) {
+        // Copy data from global memory to shared memory
+        for (int m = 0; m < TM; ++m) {
+            int A_row = threadIdx.y * TM + m;
+            int A_col = threadIdx.x;
+            if ((blockIdx.y * BM + A_row) < M && (i * BK + A_col) < K) {
+                As[A_row][A_col] = A[OFFSET(A_row, A_col, K)];
+            } else {
+                As[A_row][A_col] = 0.;
+            }
+        }
+        for (int n = 0; n < TN; ++n) {
+            int B_row = threadIdx.y;
+            int B_col = threadIdx.x * TN + n;
+            if ((i * BK + B_row) < K && (blockIdx.x * BN + B_col) < N) {
+                Bs[B_row][B_col] = B[OFFSET(B_row, B_col, N)];
+            } else {
+                Bs[B_row][B_col] = 0.;
+            }
+        }
+        __syncthreads();
+        A += BK;
+        B += BK * N;
+        for (int k = 0; k < BK; ++k) {
+            for (int m = 0; m < TM; ++m) {
+                int A_row = threadIdx.y * TM + m;
+                for (int n = 0; n < TN; ++n) {
+                    int B_col = threadIdx.x * TN + n;
+                    val[m][n] += __half2float(As[A_row][k]) * __half2float(Bs[k][B_col]);
+                }
+            }
+        }
+        __syncthreads();
+    }
+
+    for (int m = 0; m < TM; ++m) {
+        int C_row = threadIdx.y * TM + m;
+        for (int n = 0; n < TN; ++n) {
+            int C_col = threadIdx.x * TN + n;
+            if ((blockIdx.y * BM + C_row) < M && (blockIdx.x * BN + C_col) < N) {
+                C[OFFSET(C_row, C_col, N)] = val[m][n];
+            }
+        }
+    }
 }
     
 
@@ -170,141 +217,189 @@ __global__ void wmmaNaiveKernel(const half *__restrict__ A, const half *__restri
 
 int main() {
 
-    int M = 1024;
-    int K = 1024;
-    int N = 1024;
+    int arr[6] = {16, 64, 128, 256, 512, 1024};
 
-    std::cout << "Matrix Sizes" << std::endl;
-    std::cout << "M: " << M << std::endl;
-    std::cout << "N: " << N << std::endl;
-    std::cout << "K: " << K << std::endl;
+    for (int trial = 0; trial < 6; ++trial) {
+        int M = arr[trial];
+        int K = arr[trial];
+        int N = arr[trial];
 
-    unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
-    std::default_random_engine random_engine(seed);
+        std::cout << "Matrix Sizes" << std::endl;
+        std::cout << "M: " << M << std::endl;
+        std::cout << "N: " << N << std::endl;
+        std::cout << "K: " << K << std::endl;
 
-    thrust::host_vector<__half> h_a_vec(M*K);
-    thrust::host_vector<__half> h_b_vec(K*N);
+        unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+        std::default_random_engine random_engine(0);
 
-    fill_random_half_values(h_a_vec.data(), h_a_vec.size(), random_engine);
-    fill_random_half_values(h_b_vec.data(), h_b_vec.size(), random_engine);
-    
-    thrust::device_vector<__half> d_a_vec = h_a_vec;
-    thrust::device_vector<__half> d_b_vec = h_b_vec;
-    thrust::device_vector<float> d_c_vec(M*N);
+        thrust::host_vector<__half> h_a_vec(M*K);
+        thrust::host_vector<__half> h_b_vec(K*N);
 
-    // CPU
-    /*std::vector<int16_t> h_c_cpu(M*N, 0);
+        fill_random_half_values(h_a_vec.data(), h_a_vec.size(), random_engine);
+        fill_random_half_values(h_b_vec.data(), h_b_vec.size(), random_engine);
+        
+        /*std::cout<<"===================="<<std::endl;
+        for (int i=0;i<M;++i) {
+            for (int j=0;j<K;++j) {
+                std::cout<<__half2float(h_b_vec[i*K + j])<<", ";
+            }
+            std::cout<<std::endl;
+        }*/
 
-    auto cpu_start = std::chrono::high_resolution_clock::now();
-    for (int r=0 ; r<M ; ++r) {
-        for (int c=0; c<N ; ++c) {
-            for (int k=0; k<K; ++k) {
-                h_c_cpu[r * N + c] += h_a_vec[r * K + k] * h_b_vec[k * N + c];
+        thrust::device_vector<__half> d_a_vec = h_a_vec;
+        thrust::device_vector<__half> d_b_vec = h_b_vec;
+        thrust::device_vector<float> d_c_vec(M*N);
+
+        // CPU
+        /*std::vector<int16_t> h_c_cpu(M*N, 0);
+
+        auto cpu_start = std::chrono::high_resolution_clock::now();
+        for (int r=0 ; r<M ; ++r) {
+            for (int c=0; c<N ; ++c) {
+                for (int k=0; k<K; ++k) {
+                    h_c_cpu[r * N + c] += h_a_vec[r * K + k] * h_b_vec[k * N + c];
+                }
             }
         }
-    }
-    auto cpu_end = std::chrono::high_resolution_clock::now();
-    auto t_cpu = std::chrono::duration_cast<std::chrono::microseconds>(cpu_end - cpu_start).count();*/
+        auto cpu_end = std::chrono::high_resolution_clock::now();
+        auto t_cpu = std::chrono::duration_cast<std::chrono::microseconds>(cpu_end - cpu_start).count();*/
 
-    dim3 threadNum(32, 32);
-    dim3 blockNum((M + threadNum.x - 1)/threadNum.x, (N + threadNum.y - 1)/threadNum.y);
+        dim3 threadNum(32, 32);
+        dim3 blockNum((M + threadNum.x - 1)/threadNum.x, (N + threadNum.y - 1)/threadNum.y);
 
-    cudaEvent_t cuda_start, cuda_end;
-    cudaEventCreate(&cuda_start);
-    cudaEventCreate(&cuda_end);
+        cudaEvent_t cuda_start, cuda_end;
+        cudaEventCreate(&cuda_start);
+        cudaEventCreate(&cuda_end);
 
-    const int numIterations = 1;
-    float naive_totalTime = 0.0f;
+        const int numIterations = 1;
+        float naive_totalTime = 0.0f;
 
-    // 1. CUDA NAIVE
-    for (int i = 0; i < numIterations; ++i) {
-        cudaEventRecord(cuda_start, 0);
+        // 1. CUDA NAIVE
+        for (int i = 0; i < numIterations; ++i) {
+            cudaEventRecord(cuda_start, 0);
 
-        gemm_naive<__half><<<blockNum, threadNum>>>(d_a_vec.data().get(), d_b_vec.data().get(), d_c_vec.data().get(), M, K, N);
+            gemm_naive<__half><<<blockNum, threadNum>>>(d_a_vec.data().get(), d_b_vec.data().get(), d_c_vec.data().get(), M, K, N);
 
-        cudaEventRecord(cuda_end, 0);
-        cudaEventSynchronize(cuda_end);
+            cudaEventRecord(cuda_end, 0);
+            cudaEventSynchronize(cuda_end);
 
-        float ms = 0.0f;
-        cudaEventElapsedTime(&ms, cuda_start, cuda_end);
+            float ms = 0.0f;
+            cudaEventElapsedTime(&ms, cuda_start, cuda_end);
 
-        naive_totalTime += ms;
-    }
+            naive_totalTime += ms;
+        }
 
-    thrust::host_vector<float> h_naive_c_vec = d_c_vec;
+        thrust::host_vector<float> h_naive_c_vec = d_c_vec;
 
-    // 2. CUDA
-    float v2_totalTime = 0.0f;
-    for (int i = 0; i < numIterations; ++i) {
-        cudaEventRecord(cuda_start, 0);
+        // 2. CUDA
+        float v2_totalTime = 0.0f;
+        for (int i = 0; i < numIterations; ++i) {
+            cudaEventRecord(cuda_start, 0);
 
-        gemm_CUDA<__half><<<blockNum, threadNum>>>(d_c_vec.data().get(), d_a_vec.data().get(), d_b_vec.data().get(), M, N, K);
+            gemm_CUDA<__half><<<blockNum, threadNum>>>(d_c_vec.data().get(), d_a_vec.data().get(), d_b_vec.data().get(), M, N, K);
 
-        cudaEventRecord(cuda_end, 0);
-        cudaEventSynchronize(cuda_end);
+            cudaEventRecord(cuda_end, 0);
+            cudaEventSynchronize(cuda_end);
 
-        float ms = 0.0f;
-        cudaEventElapsedTime(&ms, cuda_start, cuda_end);
+            float ms = 0.0f;
+            cudaEventElapsedTime(&ms, cuda_start, cuda_end);
 
-        v2_totalTime += ms;
-    }
-    
-    thrust::host_vector<float> h_c_vec = d_c_vec;
+            v2_totalTime += ms;
+        }
+        
+        thrust::host_vector<float> h_c_vec = d_c_vec;
 
-    // 3. 
+        // 2.5 CUDA + reuse
+        const int sizev25 = 16;
+        const int tile_size = 2;
+        const int BM = sizev25 * tile_size;
+        const int BN = sizev25 * tile_size;
+        const int BK = sizev25;
+        const int TM = tile_size;
+        const int TN = tile_size;
 
-    dim3 block(WARP_SIZE);
-    dim3 grid(div_ceil(N, WMMA_N), div_ceil(M, WMMA_M));
+        dim3 threadNumV25(sizev25, sizev25);
+        dim3 blockNumV25(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
 
-    float v3_totalTime = 0.0f;
-    for (int i = 0; i < numIterations; ++i) {
-        cudaEventRecord(cuda_start, 0);
+        float v25_totalTime = 0.0f;
+        for (int i = 0; i < numIterations; ++i) {
+            cudaEventRecord(cuda_start, 0);
 
-        wmmaNaiveKernel<<<grid, block>>>(d_a_vec.data().get(), d_b_vec.data().get(), d_c_vec.data().get(), M, N, K);
+            //gemm_CUDA_reuse_thread<__half><<<blockNumV25, threadNumV25>>>(d_c_vec.data().get(), d_a_vec.data().get(), d_b_vec.data().get(), M, N, K);
+            tile_2d_kernel<BM, BN, BK, TM, TN><<<blockNumV25, threadNumV25>>>(M, N, K, d_a_vec.data().get(), d_b_vec.data().get(), d_c_vec.data().get());
 
-        cudaEventRecord(cuda_end, 0);
-        cudaEventSynchronize(cuda_end);
+            cudaEventRecord(cuda_end, 0);
+            cudaEventSynchronize(cuda_end);
 
-        float ms = 0.0f;
-        cudaEventElapsedTime(&ms, cuda_start, cuda_end);
+            float ms = 0.0f;
+            cudaEventElapsedTime(&ms, cuda_start, cuda_end);
 
-        v3_totalTime += ms;
-    }
-    
-    thrust::host_vector<float> h_c_vec_v3 = d_c_vec;
+            v25_totalTime += ms;
+        }
+        
+        thrust::host_vector<float> h_c_reuse_vec = d_c_vec;
 
-    // compare
-    bool flg = 0;
-    float cuda_error = 0.0f;
-    float tensor_error = 0.0f;
+        // 3. 
 
-    for (int r=0 ; r<M ; ++r) {
-        for (int c=0; c<N ; ++c) {
-            float naive_res = h_naive_c_vec[r * N + c];
-            float cuda_res = h_c_vec[r * N + c];
-            float tensor_res = h_c_vec_v3[r * N + c];
+        dim3 block(WARP_SIZE);
+        dim3 grid(div_ceil(N, WMMA_N), div_ceil(M, WMMA_M));
 
-            float err_cuda = abs(naive_res-cuda_res)/naive_res;
-            float err_tensor = abs(naive_res-tensor_res)/naive_res;
+        float v3_totalTime = 0.0f;
+        for (int i = 0; i < numIterations; ++i) {
+            cudaEventRecord(cuda_start, 0);
 
-            cuda_error += err_cuda;
-            tensor_error += err_tensor;
+            wmmaNaiveKernel<<<grid, block>>>(d_a_vec.data().get(), d_b_vec.data().get(), d_c_vec.data().get(), M, N, K);
 
-            if (err_cuda > 1e-3 || err_tensor > 1e-3) {
-                printf("(%f, %f, %f)\n", h_naive_c_vec[r * N + c], h_c_vec[r * N + c], h_c_vec_v3[r * N + c]);
-                printf("Failed: cuda, tensor: %f, %f\n", err_cuda, err_tensor);
-                flg = 1;
+            cudaEventRecord(cuda_end, 0);
+            cudaEventSynchronize(cuda_end);
+
+            float ms = 0.0f;
+            cudaEventElapsedTime(&ms, cuda_start, cuda_end);
+
+            v3_totalTime += ms;
+        }
+        
+        thrust::host_vector<float> h_c_vec_v3 = d_c_vec;
+
+        // compare
+        bool flg = 0;
+        float cuda_error = 0.0f;
+        float cuda_reuse_error = 0.0f;
+        float tensor_error = 0.0f;
+
+        for (int r=0 ; r<M ; ++r) {
+            for (int c=0; c<N ; ++c) {
+                float naive_res = h_naive_c_vec[r * N + c];
+                float cuda_res = h_c_vec[r * N + c];
+                float cuda_reuse_res = h_c_reuse_vec[r * N + c];
+                float tensor_res = h_c_vec_v3[r * N + c];
+
+                float err_cuda = abs(naive_res-cuda_res)/naive_res;
+                float err_cuda_reuse = abs(naive_res-cuda_reuse_res)/naive_res;
+                float err_tensor = abs(naive_res-tensor_res)/naive_res;
+
+                cuda_error += err_cuda;
+                cuda_reuse_error += err_cuda_reuse;
+                tensor_error += err_tensor;
+
+                if (err_cuda > 1e-3 || err_tensor > 1e-3 || err_cuda_reuse > 1e-3) {
+                    printf("(%f, %f, %f, %f)\n", h_naive_c_vec[r * N + c], h_c_vec[r * N + c], h_c_reuse_vec[r * N + c], h_c_vec_v3[r * N + c]);
+                    printf("Failed: cuda, cuda_reuse, tensor: %f, %f, %f\n", err_cuda, err_cuda_reuse, err_tensor);
+                    flg = 1;
+                }
+                if (flg) break;
             }
             if (flg) break;
         }
-        if (flg) break;
-    }
 
-    if (!flg) {
-        std::cout << "NAIVE execution time: " << naive_totalTime/numIterations << " ms" << std::endl;
-        std::cout << "V2 execution time: " << v2_totalTime/numIterations << " ms, error: " << cuda_error/(M*N) << std::endl;
-        std::cout << "V3 execution time: " << v3_totalTime/numIterations << " ms, error: " << tensor_error/(M*N) << std::endl;
+        if (!flg) {
+            std::cout << "NAIVE execution time: " << naive_totalTime/numIterations << " ms" << std::endl;
+            std::cout << "V2 execution time: " << v2_totalTime/numIterations << " ms, error: " << cuda_error/(M*N) << std::endl;
+            std::cout << "V2.5 execution time: " << v25_totalTime/numIterations << " ms, error: " << cuda_reuse_error/(M*N) << std::endl;
+            std::cout << "V3 execution time: " << v3_totalTime/numIterations << " ms, error: " << tensor_error/(M*N) << std::endl;
+        }
     }
+    
 
     return 0;
 }
