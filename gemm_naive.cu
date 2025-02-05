@@ -62,7 +62,7 @@ int main() {
     int n = 1024;
     int k = 1024;
 
-    int trials = 100;
+    int trials = 1;
 
     int matrixSize = m * n;
 
@@ -92,7 +92,7 @@ int main() {
     cudaEventRecord(start, 0);
 
     for (int i=0;i<trials;++i) {
-        // gemm_naive<<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
+        gemm_naive<<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
         gemm_shared<32><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
     }
 

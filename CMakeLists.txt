@@ -8,7 +8,7 @@ set(CMAKE_CUDA_ARCHITECTURES 86;89)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_BUILD_TYPE Release)
+#set(CMAKE_BUILD_TYPE Release)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 
@@ -32,7 +32,7 @@ find_package(OpenMP REQUIRED)
 find_package(CUDA 12.3 REQUIRED)
 
 # Set CUDA compiler flags
-set(CMAKE_CUDA_FLAGS_DEBUG "-std=c++17 --extended-lambda -Xcudafe --diag_suppress=997 -g -G -lineinfo")
+set(CMAKE_CUDA_FLAGS_DEBUG "-std=c++17 --extended-lambda -Xcudafe --diag_suppress=997 -g -lineinfo")
 set(CMAKE_CUDA_FLAGS_RELEASE "-O3 -std=c++17 --extended-lambda -Xcudafe --diag_suppress=997 -DNDEBUG -lineinfo")
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -125,10 +125,17 @@ add_executable(test_compare_cuda_tensor test_compare_cuda_tensor.cu)
 target_link_libraries(test_compare_cuda_tensor ${CUDA_LIBRARIES})
 
 add_executable(test_cpu_gemm test_cpu_gemm.cc)
-target_link_libraries(test_cpu_gemm)
+target_compile_options(test_cpu_gemm PRIVATE -march=native -O3 -ffast-math)
+target_link_libraries(test_cpu_gemm PRIVATE OpenMP::OpenMP_CXX)
 
 add_executable(test_simpleTensor test_simpleTensor.cu)
 target_link_libraries(test_simpleTensor ${CUDA_LIBRARIES})
+
+add_executable(test_transpose test_transpose.cu)
+target_link_libraries(test_transpose ${CUDA_LIBRARIES})
+
+add_executable(test_ldmatrix test_ldmatrix.cu)
+target_link_libraries(test_ldmatrix ${CUDA_LIBRARIES})
 
 include(GoogleTest)
 gtest_discover_tests(unittest)

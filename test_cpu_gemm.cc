@@ -3,6 +3,8 @@
 #include <random>
 #include <thread>
 #include <chrono>
+#include <omp.h>
+#include <immintrin.h>  // AVX2 intrinsics
 
 void get_rand_vec(std::vector<std::vector<int>> &A, std::vector<std::vector<int>> &B, int M, int N, int K) {
     A.resize(M, std::vector<int>(K));
@@ -47,6 +49,79 @@ void gemm_naive(const std::vector<std::vector<int>> &A, const std::vector<std::v
         for (int j=0;j<N;++j) {
             for (int k=0;k<K;++k) {
                 C[i][j] += A[i][k] * B[k][j];
+            }
+        }
+    }
+}
+
+void gemm_naive_reorder(const std::vector<std::vector<int>> &A, const std::vector<std::vector<int>> &B, std::vector<std::vector<int>> &C) {
+    int M = A.size();
+    int N = B.size();
+    int K = A[0].size();
+
+    for (int i=0;i<M;++i) {
+        for (int k=0;k<K;++k) {
+            for (int j=0;j<N;++j) {
+                C[i][j] += A[i][k] * B[k][j];
+            }
+        }
+    }
+}
+
+template <int rows, int cols, int ks, int tile_size>
+void gemm_tiling(const std::vector<std::vector<int>> &A, const std::vector<std::vector<int>> &B, std::vector<std::vector<int>> &C) {
+    for (int innerTile = 0; innerTile < ks; innerTile += tile_size) {
+        for (int row = 0; row < rows; ++row) {
+            int innerTileEnd = std::min(ks, innerTile + tile_size);
+
+            for (int k = innerTile; k < innerTileEnd; ++k) {
+                for (int col = 0; col < cols; ++col) {
+                    C[row][col] += A[row][k] * B[k][col];
+                }
+            }
+        }
+    }
+}
+
+void gemm_naive_AVX2(const int *A, const int *B, int *C) {
+    int M = 1024;
+    int N = 1024;
+    int K = 1024;
+
+    for (int i=0;i<M;++i) {
+        for (int k=0;k<K;++k) {
+            for (int j=0;j<N;j+=8) {
+                // Load 8 values from C (initially, this should be zeroed out)
+                __m256i c_vec = _mm256_loadu_si256((__m256i*)&C[i * N + j]);
+
+                // Load a single value from A[i][k], broadcast it to all elements of a vector
+                __m256i a_vec = _mm256_set1_epi32(A[i * K + k]);
+
+                // Load 8 values from B[k][j]
+                __m256i b_vec = _mm256_loadu_si256((__m256i*)&B[k * N + j]);
+
+                // Multiply A[i][k] by B[k][j] for 8 elements and add the result to C[i][j]
+                __m256i result = _mm256_add_epi32(c_vec, _mm256_mullo_epi32(a_vec, b_vec));
+
+                // Store the updated result back into C
+                _mm256_storeu_si256((__m256i*)&C[i * N + j], result);
+            }
+        }
+    }
+}
+
+template <int rows, int cols, int ks, int tile_size>
+void gemm_tiling_openMP(const std::vector<std::vector<int>> &A, const std::vector<std::vector<int>> &B, std::vector<std::vector<int>> &C) {
+    //#pragma omp parallel for collapse(2) 
+    for (int innerTile = 0; innerTile < ks; innerTile += tile_size) {
+        for (int row = 0; row < rows; ++row) {
+            int innerTileEnd = std::min(ks, innerTile + tile_size);
+
+            for (int k = innerTile; k < innerTileEnd; ++k) {
+                #pragma omp simd
+                for (int col = 0; col < cols; ++col) {
+                    C[row][col] += A[row][k] * B[k][col];
+                }
             }
         }
     }
@@ -119,8 +194,21 @@ int main() {
     std::vector<std::vector<int>> A_mat, B_mat;
     get_rand_vec(A_mat, B_mat, M, N, K);
 
-    std::vector<std::vector<int>> c_naive(M, std::vector<int>(N)), c_naive_reg(M, std::vector<int>(N)), c_multithread(M, std::vector<int>(N));
+    std::vector<int> A_mat_flatten(M*K), B_mat_flatten(N*K);
+    for (int i=0;i<M;++i) {
+        for (int j=0;j<K;++j) {
+            A_mat_flatten[i*K + j] = A_mat[i][j];
+        }
+    }
 
+    for (int i=0;i<K;++i) {
+        for (int j=0;j<N;++j) {
+            B_mat_flatten[i*N + j] = B_mat[i][j];
+        }
+    }
+
+    std::vector<std::vector<int>> c_naive(M, std::vector<int>(N)), c_naive_reorder(M, std::vector<int>(N)), c_naive_reg(M, std::vector<int>(N)), c_multithread(M, std::vector<int>(N)), c_tile(M, std::vector<int>(N)), c_tile_openMP(M, std::vector<int>(N));
+    std::vector<int> c_tile_AVX2(M*N);
 
     auto start = std::chrono::high_resolution_clock::now();
     gemm_naive(A_mat, B_mat, c_naive);
@@ -128,9 +216,29 @@ int main() {
     auto naive_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
     start = std::chrono::high_resolution_clock::now();
+    gemm_naive_reorder(A_mat, B_mat, c_naive_reorder);
+    end = std::chrono::high_resolution_clock::now();
+    auto naive_reordered_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    start = std::chrono::high_resolution_clock::now();
     gemm_regMN(A_mat, B_mat, c_naive_reg);
     end = std::chrono::high_resolution_clock::now();
     auto naive_reg_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    start = std::chrono::high_resolution_clock::now();
+    gemm_tiling<M, N, K, 32>(A_mat, B_mat, c_tile);
+    end = std::chrono::high_resolution_clock::now();
+    auto naive_tile_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    start = std::chrono::high_resolution_clock::now();
+    gemm_tiling_openMP<M, N, K, 32>(A_mat, B_mat, c_tile_openMP);
+    end = std::chrono::high_resolution_clock::now();
+    auto naive_tile_openMP_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    start = std::chrono::high_resolution_clock::now();
+    gemm_naive_AVX2(A_mat_flatten.data(), B_mat_flatten.data(), c_tile_AVX2.data());
+    end = std::chrono::high_resolution_clock::now();
+    auto naive_tile_AVX2_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
     start = std::chrono::high_resolution_clock::now();
     gemm_multithreads(A_mat, B_mat, c_multithread);
@@ -142,7 +250,7 @@ int main() {
     bool flg = 0;
     for (int i=0;i<M;++i) {
         for (int j=0;j<N;++j) {
-            if ((c_naive[i][j] != c_naive_reg[i][j]) || (c_naive[i][j] != c_multithread[i][j])) {
+            if ((c_naive[i][j] != c_naive_reg[i][j]) || (c_naive[i][j] != c_multithread[i][j]) || (c_naive[i][j] != c_naive_reorder[i][j]) || (c_naive[i][j] != c_tile[i][j]) || (c_naive[i][j] != c_tile_openMP[i][j]) || (c_naive[i][j] != c_tile_AVX2[i * N + j])) {
                 std::cout << "FAILED." << std::endl;
                 return 0;
             }
@@ -155,7 +263,11 @@ int main() {
     
     std::cout << "SUCCESS." << std::endl;
     std::cout << "Naive Elapsed Time: " << naive_time.count() << "ms" << std::endl;
+    std::cout << "Naive reorder Elapsed Time: " << naive_reordered_time.count() << "ms" << std::endl;
+    std::cout << "Naive reorder + AVX2 Elapsed Time: " << naive_tile_AVX2_time.count() << "ms" << std::endl;
     std::cout << "Naive + Reg Elapsed Time: " << naive_reg_time.count() << "ms" << std::endl;
+    std::cout << "Naive + Tile Elapsed Time: " << naive_tile_time.count() << "ms" << std::endl;
+    std::cout << "Naive + Tile + openMP Elapsed Time: " << naive_tile_openMP_time.count() << "ms" << std::endl;
     std::cout << "Multithreads Elapsed Time: " << mt_time.count() << "ms" << std::endl;
 
     

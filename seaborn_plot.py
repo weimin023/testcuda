@@ -20,10 +20,10 @@ data3 = [x * 1e3 for x in data3]
 data4 = [0.0114, 0.011, 0.01, 0.02, 0.06, 0.32]
 data4 = [x * 1e3 for x in data4]
 
-sns.lineplot(x=x_sticks, y=data1, label="CUDA Core (Naive)", marker="o")
-sns.lineplot(x=x_sticks, y=data2, label="CUDA Core (Shared Mem)", marker="s")
-sns.lineplot(x=x_sticks, y=data3, label="CUDA Core (Shared Mem + Threads Reuse)", marker="^")
-sns.lineplot(x=x_sticks, y=data4, label="Tensor Core (Naive)", marker="D")
+sns.lineplot(x=x_sticks, y=data1, label="(1024) CUDA Core (Naive)", marker="o")
+sns.lineplot(x=x_sticks, y=data2, label="(1024) CUDA Core (Shared Mem)", marker="s")
+sns.lineplot(x=x_sticks, y=data3, label="(256) CUDA Core (Shared Mem + Threads Reuse)", marker="^")
+sns.lineplot(x=x_sticks, y=data4, label="(32) Tensor Core (Naive)", marker="D")
 
 plt.xlabel("Data Size (M*K*N)", fontsize=20)
 plt.ylabel("Runtime (us)", fontsize=20)
