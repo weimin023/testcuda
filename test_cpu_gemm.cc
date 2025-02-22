@@ -68,8 +68,35 @@ void gemm_naive_reorder(const std::vector<std::vector<int>> &A, const std::vecto
     }
 }
 
+template <int M, int N, int K, int tile_size>
+void gemm_tile_two_dim(const std::vector<std::vector<int>> &A, const std::vector<std::vector<int>> &B, std::vector<std::vector<int>> &C) {
+    // Choose tile sizes based on typical L1 cache size
+    // These values should be tuned based on your specific hardware
+    
+    // Iterate over tiles
+    for (int i0 = 0; i0 < M; i0 += tile_size) {
+        for (int k0 = 0; k0 < K; k0 += tile_size) {
+            for (int j0 = 0; j0 < N; j0 += tile_size) {
+                // Define tile boundaries
+                const int i_end = std::min(i0 + tile_size, M);
+                const int j_end = std::min(j0 + tile_size, N);
+                const int k_end = std::min(k0 + tile_size, K);
+                
+                // Compute on the current tile
+                for (int i = i0; i < i_end; i++) {
+                    for (int k = k0; k < k_end; k++) {
+                        for (int j = j0; j < j_end; j++) {
+                            C[i][j] += A[i][k] * B[k][j];
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 template <int rows, int cols, int ks, int tile_size>
-void gemm_tiling(const std::vector<std::vector<int>> &A, const std::vector<std::vector<int>> &B, std::vector<std::vector<int>> &C) {
+void gemm_tile_k_dim(const std::vector<std::vector<int>> &A, const std::vector<std::vector<int>> &B, std::vector<std::vector<int>> &C) {
     for (int innerTile = 0; innerTile < ks; innerTile += tile_size) {
         for (int row = 0; row < rows; ++row) {
             int innerTileEnd = std::min(ks, innerTile + tile_size);
@@ -77,6 +104,59 @@ void gemm_tiling(const std::vector<std::vector<int>> &A, const std::vector<std::
             for (int k = innerTile; k < innerTileEnd; ++k) {
                 for (int col = 0; col < cols; ++col) {
                     C[row][col] += A[row][k] * B[k][col];
+                }
+            }
+        }
+    }
+}
+
+template<int M, int N, int K, int TILE_SIZE>
+void gemm_tile_opt(const std::vector<std::vector<int>> &A, const std::vector<std::vector<int>> &B, std::vector<std::vector<int>> &C) {
+    std::vector<int> A_local(TILE_SIZE*TILE_SIZE);
+    std::vector<int> B_local(TILE_SIZE*TILE_SIZE);
+    std::vector<int> C_local(TILE_SIZE*TILE_SIZE);
+
+    // Iterate over tiles
+    for (int i0 = 0; i0 < M; i0 += TILE_SIZE) {
+        const int i_end = std::min(i0 + TILE_SIZE, M);
+        
+        for (int j0 = 0; j0 < N; j0 += TILE_SIZE) {
+            const int j_end = std::min(j0 + TILE_SIZE, N);
+            
+            // Clear C_local
+            std::fill(C_local.begin(), C_local.end(), 0);
+            
+            for (int k0 = 0; k0 < K; k0 += TILE_SIZE) {
+                const int k_end = std::min(k0 + TILE_SIZE, K);
+                
+                // Copy tiles to local buffers
+                for (int i = i0; i < i_end; i++) {
+                    for (int k = k0; k < k_end; k++) {
+                        A_local[(i - i0) * TILE_SIZE + (k - k0)] = A[i][k];
+                    }
+                }
+                
+                for (int k = k0; k < k_end; k++) {
+                    for (int j = j0; j < j_end; j++) {
+                        B_local[(k - k0) * TILE_SIZE + (j - j0)] = B[k][j];
+                    }
+                }
+                
+                // Compute on local tiles
+                for (int i = 0; i < i_end - i0; i++) {
+                    for (int k = 0; k < k_end - k0; k++) {
+                        const int a_val = A_local[i * TILE_SIZE + k];
+                        for (int j = 0; j < j_end - j0; j++) {
+                            C_local[i * TILE_SIZE + j] += a_val * B_local[k * TILE_SIZE + j];
+                        }
+                    }
+                }
+            }
+            
+            // Write back C_local to C
+            for (int i = i0; i < i_end; i++) {
+                for (int j = j0; j < j_end; j++) {
+                    C[i][j] = C_local[(i - i0) * TILE_SIZE + (j - j0)];
                 }
             }
         }
@@ -111,7 +191,7 @@ void gemm_naive_AVX2(const int *A, const int *B, int *C) {
 }
 
 template <int rows, int cols, int ks, int tile_size>
-void gemm_tiling_openMP(const std::vector<std::vector<int>> &A, const std::vector<std::vector<int>> &B, std::vector<std::vector<int>> &C) {
+void gemm_tile_k_dim_openMP(const std::vector<std::vector<int>> &A, const std::vector<std::vector<int>> &B, std::vector<std::vector<int>> &C) {
     //#pragma omp parallel for collapse(2) 
     for (int innerTile = 0; innerTile < ks; innerTile += tile_size) {
         for (int row = 0; row < rows; ++row) {
@@ -207,7 +287,7 @@ int main() {
         }
     }
 
-    std::vector<std::vector<int>> c_naive(M, std::vector<int>(N)), c_naive_reorder(M, std::vector<int>(N)), c_naive_reg(M, std::vector<int>(N)), c_multithread(M, std::vector<int>(N)), c_tile(M, std::vector<int>(N)), c_tile_openMP(M, std::vector<int>(N));
+    std::vector<std::vector<int>> c_naive(M, std::vector<int>(N)), c_naive_reorder(M, std::vector<int>(N)), c_naive_reg(M, std::vector<int>(N)), c_multithread(M, std::vector<int>(N)), c_tile(M, std::vector<int>(N)), c_tile_openMP(M, std::vector<int>(N)), c_tile2(M, std::vector<int>(N)), c_tile3(M, std::vector<int>(N));
     std::vector<int> c_tile_AVX2(M*N);
 
     auto start = std::chrono::high_resolution_clock::now();
@@ -226,12 +306,12 @@ int main() {
     auto naive_reg_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
     start = std::chrono::high_resolution_clock::now();
-    gemm_tiling<M, N, K, 32>(A_mat, B_mat, c_tile);
+    gemm_tile_k_dim<M, N, K, 32>(A_mat, B_mat, c_tile);
     end = std::chrono::high_resolution_clock::now();
     auto naive_tile_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
     start = std::chrono::high_resolution_clock::now();
-    gemm_tiling_openMP<M, N, K, 32>(A_mat, B_mat, c_tile_openMP);
+    gemm_tile_k_dim_openMP<M, N, K, 32>(A_mat, B_mat, c_tile_openMP);
     end = std::chrono::high_resolution_clock::now();
     auto naive_tile_openMP_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
@@ -245,12 +325,21 @@ int main() {
     end = std::chrono::high_resolution_clock::now();
     auto mt_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
+    start = std::chrono::high_resolution_clock::now();
+    gemm_tile_two_dim<M, N, K, 32>(A_mat, B_mat, c_tile2);
+    end = std::chrono::high_resolution_clock::now();
+    auto naive_tile2_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    start = std::chrono::high_resolution_clock::now();
+    gemm_tile_opt<M, N, K, 32>(A_mat, B_mat, c_tile3);
+    end = std::chrono::high_resolution_clock::now();
+    auto naive_tile3_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     
 
     bool flg = 0;
     for (int i=0;i<M;++i) {
         for (int j=0;j<N;++j) {
-            if ((c_naive[i][j] != c_naive_reg[i][j]) || (c_naive[i][j] != c_multithread[i][j]) || (c_naive[i][j] != c_naive_reorder[i][j]) || (c_naive[i][j] != c_tile[i][j]) || (c_naive[i][j] != c_tile_openMP[i][j]) || (c_naive[i][j] != c_tile_AVX2[i * N + j])) {
+            if ((c_naive[i][j] != c_naive_reg[i][j]) || (c_naive[i][j] != c_multithread[i][j]) || (c_naive[i][j] != c_naive_reorder[i][j]) || (c_naive[i][j] != c_tile[i][j]) || (c_naive[i][j] != c_tile_openMP[i][j]) || (c_naive[i][j] != c_tile_AVX2[i * N + j]) || (c_naive[i][j] != c_tile2[i][j]) || (c_naive[i][j] != c_tile3[i][j])) {
                 std::cout << "FAILED." << std::endl;
                 return 0;
             }
@@ -267,6 +356,8 @@ int main() {
     std::cout << "Naive reorder + AVX2 Elapsed Time: " << naive_tile_AVX2_time.count() << "ms" << std::endl;
     std::cout << "Naive + Reg Elapsed Time: " << naive_reg_time.count() << "ms" << std::endl;
     std::cout << "Naive + Tile Elapsed Time: " << naive_tile_time.count() << "ms" << std::endl;
+    std::cout << "Naive + Tile2 Elapsed Time: " << naive_tile2_time.count() << "ms" << std::endl;
+    std::cout << "Naive + Tile3 Elapsed Time: " << naive_tile3_time.count() << "ms" << std::endl;
     std::cout << "Naive + Tile + openMP Elapsed Time: " << naive_tile_openMP_time.count() << "ms" << std::endl;
     std::cout << "Multithreads Elapsed Time: " << mt_time.count() << "ms" << std::endl;
 
