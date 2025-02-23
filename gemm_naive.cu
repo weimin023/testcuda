@@ -9,14 +9,13 @@
 // Naive GEMM
 __global__ void gemm_naive(float *dA, float *dB, float *dC, int M, int K, int N)
 {
-    int row = threadIdx.x + blockIdx.x * blockDim.x;
-    int col = threadIdx.y + blockIdx.y * blockDim.y;
-    float tmp = 0;
-    if (row < M && col < N)
-    {
-        for (int s = 0; s < K; s++)
-        {
-            tmp += dA[row * K + s] * dB[s * N + col];
+    int row = threadIdx.y + blockDim.y * blockIdx.y;
+    int col = threadIdx.x + blockDim.x * blockIdx.x;
+
+    if (row < M && col < N) {
+        float tmp = 0;
+        for (int k=0;k<K;++k) {
+            tmp += dA[row * K + k] * dB[k * N + col];
         }
         dC[row * N + col] = tmp;
     }
@@ -56,13 +55,69 @@ template<int TILE_SIZE> __global__ void gemm_shared(float *dA, float *dB, float 
     
 }
 
+template<int TILE_SIZE>
+__global__ void gemm_shared_transposed(float *dA, float *dB, float *dC, int M, int K, int N) {
+    // Block indices
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+    
+    // Thread indices
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    
+    // Starting indices for this block
+    int row = TILE_SIZE * bx + tx;
+    int col = TILE_SIZE * by + ty;
+    
+    // Shared memory tiles
+    __shared__ float As[TILE_SIZE][TILE_SIZE];
+    __shared__ float Bs[TILE_SIZE][TILE_SIZE];
+    
+    float sum = 0.0f;
+    
+    // Loop over tiles
+    for (int t = 0; t < (K + TILE_SIZE - 1) / TILE_SIZE; t++) {
+        // Load A tile - directly in row-major order
+        if (row < M && (t * TILE_SIZE + ty) < K) {
+            As[tx][ty] = dA[row * K + t * TILE_SIZE + ty];
+        } else {
+            As[tx][ty] = 0.0f;
+        }
+        
+        // Load B tile - with transposition
+        if ((t * TILE_SIZE + tx) < K && col < N) {
+            // Original B is in row-major: B[k][n]
+            // Load it transposed into shared memory
+            Bs[ty][tx] = dB[(t * TILE_SIZE + tx) * N + col];
+        } else {
+            Bs[ty][tx] = 0.0f;
+        }
+        
+        __syncthreads();
+        
+        // Compute on the tile
+        #pragma unroll
+        for (int k = 0; k < TILE_SIZE; k++) {
+            // Now both matrices are accessed in a coalesced manner
+            sum += As[tx][k] * Bs[ty][k];
+        }
+        
+        __syncthreads();
+    }
+    
+    // Store result
+    if (row < M && col < N) {
+        dC[row * N + col] = sum;
+    }
+}
+
 int main() {
     
     int m = 1024;
     int n = 1024;
     int k = 1024;
 
-    int trials = 1;
+    int trials = 100;
 
     int matrixSize = m * n;
 
@@ -93,7 +148,8 @@ int main() {
 
     for (int i=0;i<trials;++i) {
         gemm_naive<<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
-        gemm_shared<32><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
+        //gemm_shared<32><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
+        //gemm_shared_transposed<32><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
     }
 
     cudaError_t err = cudaGetLastError();

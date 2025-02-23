@@ -163,7 +163,36 @@ void gemm_tile_opt(const std::vector<std::vector<int>> &A, const std::vector<std
     }
 }
 
-void gemm_naive_AVX2(const int *A, const int *B, int *C) {
+void gemm_v2_AVX2(const int *A, const int *B, int *C) {
+    int M = 1024;
+    int N = 1024;
+    int K = 1024;
+
+    std::vector<int> B_trans(N*K);
+    for (int i = 0; i < K; i++) {
+        for (int j = 0; j < N; j++) {
+            B_trans[j * K + i] = B[i * N + j];
+        }
+    }
+
+    for (int i=0;i<M;++i) {
+        for (int j=0;j<N;++j) {
+
+            __m256i sum = _mm256_setzero_si256();
+            for (int k=0;k<K-7;k+=8) {
+                __m256i a = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(&A[i * K + k]));
+                __m256i b = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(&B_trans[j * K + k]));
+                sum = _mm256_add_epi32(sum, _mm256_mullo_epi32(a, b));
+            }
+
+            int arr[8];
+            _mm256_storeu_si256((__m256i*)arr, sum);
+            C[i * N + j] = arr[0] + arr[1] + arr[2] + arr[3] + arr[4] + arr[5] + arr[6] + arr[7];
+        }
+    }
+}
+
+void gemm_reorder_AVX2(const int *A, const int *B, int *C) {
     int M = 1024;
     int N = 1024;
     int K = 1024;
@@ -288,7 +317,7 @@ int main() {
     }
 
     std::vector<std::vector<int>> c_naive(M, std::vector<int>(N)), c_naive_reorder(M, std::vector<int>(N)), c_naive_reg(M, std::vector<int>(N)), c_multithread(M, std::vector<int>(N)), c_tile(M, std::vector<int>(N)), c_tile_openMP(M, std::vector<int>(N)), c_tile2(M, std::vector<int>(N)), c_tile3(M, std::vector<int>(N));
-    std::vector<int> c_tile_AVX2(M*N);
+    std::vector<int> c_tile_AVX2(M*N), c_v2_AVX2(M*N);
 
     auto start = std::chrono::high_resolution_clock::now();
     gemm_naive(A_mat, B_mat, c_naive);
@@ -316,9 +345,14 @@ int main() {
     auto naive_tile_openMP_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
     start = std::chrono::high_resolution_clock::now();
-    gemm_naive_AVX2(A_mat_flatten.data(), B_mat_flatten.data(), c_tile_AVX2.data());
+    gemm_reorder_AVX2(A_mat_flatten.data(), B_mat_flatten.data(), c_tile_AVX2.data());
     end = std::chrono::high_resolution_clock::now();
     auto naive_tile_AVX2_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    start = std::chrono::high_resolution_clock::now();
+    gemm_v2_AVX2(A_mat_flatten.data(), B_mat_flatten.data(), c_v2_AVX2.data());
+    end = std::chrono::high_resolution_clock::now();
+    auto naive_v2_AVX2_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
     start = std::chrono::high_resolution_clock::now();
     gemm_multithreads(A_mat, B_mat, c_multithread);
@@ -339,7 +373,7 @@ int main() {
     bool flg = 0;
     for (int i=0;i<M;++i) {
         for (int j=0;j<N;++j) {
-            if ((c_naive[i][j] != c_naive_reg[i][j]) || (c_naive[i][j] != c_multithread[i][j]) || (c_naive[i][j] != c_naive_reorder[i][j]) || (c_naive[i][j] != c_tile[i][j]) || (c_naive[i][j] != c_tile_openMP[i][j]) || (c_naive[i][j] != c_tile_AVX2[i * N + j]) || (c_naive[i][j] != c_tile2[i][j]) || (c_naive[i][j] != c_tile3[i][j])) {
+            if ((c_naive[i][j] != c_naive_reg[i][j]) || (c_naive[i][j] != c_multithread[i][j]) || (c_naive[i][j] != c_naive_reorder[i][j]) || (c_naive[i][j] != c_tile[i][j]) || (c_naive[i][j] != c_tile_openMP[i][j]) || (c_naive[i][j] != c_tile_AVX2[i * N + j]) || (c_naive[i][j] != c_v2_AVX2[i * N + j]) || (c_naive[i][j] != c_tile2[i][j]) || (c_naive[i][j] != c_tile3[i][j])) {
                 std::cout << "FAILED." << std::endl;
                 return 0;
             }
@@ -354,6 +388,7 @@ int main() {
     std::cout << "Naive Elapsed Time: " << naive_time.count() << "ms" << std::endl;
     std::cout << "Naive reorder Elapsed Time: " << naive_reordered_time.count() << "ms" << std::endl;
     std::cout << "Naive reorder + AVX2 Elapsed Time: " << naive_tile_AVX2_time.count() << "ms" << std::endl;
+    std::cout << "Naive + AVX2 v2 Elapsed Time: " << naive_v2_AVX2_time.count() << "ms" << std::endl;
     std::cout << "Naive + Reg Elapsed Time: " << naive_reg_time.count() << "ms" << std::endl;
     std::cout << "Naive + Tile Elapsed Time: " << naive_tile_time.count() << "ms" << std::endl;
     std::cout << "Naive + Tile2 Elapsed Time: " << naive_tile2_time.count() << "ms" << std::endl;
