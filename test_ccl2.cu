@@ -44,20 +44,30 @@ __device__ unsigned find(unsigned* labels, unsigned x) {
 
 // Union operation for union-find algorithm
 __device__ void unionLabels(unsigned* labels, unsigned a, unsigned b) {
-    unsigned rootA = find(labels, a);
-    unsigned rootB = find(labels, b);
+    while ((a != b) && a != labels[a]) {
+        a = labels[a];
+    }
     
-    if (rootA != rootB) {
-        // Make the smaller label the representative
-        if (rootA < rootB) {
-            labels[rootB] = rootA;
+    while ((a != b) && b != labels[b]) {
+        b = labels[b];
+    }
+
+    while (a != b) {
+        if (a < b) {
+            unsigned tmp = a;
+            a = b;
+            b = tmp;
+        }
+        unsigned c = atomicMin(&labels[a], b);
+        if (a == c) {
+            a = b;
         } else {
-            labels[rootA] = rootB;
+            a = c;
         }
     }
 }
 
-std::vector<unsigned char> loadPGM(const std::string& filename, int& width, int& height) {
+std::vector<bool> loadPGM(const std::string& filename, int& width, int& height) {
     std::ifstream file(filename, std::ios::binary);
     if (!file) {
         std::cerr << "Error: Unable to open file " << filename << std::endl;
@@ -77,8 +87,14 @@ std::vector<unsigned char> loadPGM(const std::string& filename, int& width, int&
 
     file.ignore(); // Ignore newline or carriage return before pixel data
 
-    std::vector<unsigned char> pixels(width * height);
-    file.read(reinterpret_cast<char*>(pixels.data()), pixels.size());
+    std::vector<unsigned char> pixel_data(width * height);
+    file.read(reinterpret_cast<char*>(pixel_data.data()), pixel_data.size());
+
+    // Convert to vector<bool>
+    std::vector<bool> pixels(width * height);
+    for (size_t i = 0; i < pixel_data.size(); ++i) {
+        pixels[i] = (pixel_data[i] > 0); // Set to true if pixel value > 0
+    }
 
     file.close();
 
@@ -89,7 +105,7 @@ std::vector<unsigned char> loadPGM(const std::string& filename, int& width, int&
 // Kernel 1: Strip Labeling
 //------------------------------------------------------------------------------
 __global__ void stripLabeling(
-    const unsigned char* input,
+    const bool* input,
     unsigned* labels,
     int width,
     int height,
@@ -156,7 +172,91 @@ __global__ void stripLabeling(
     }
 }
 
-void previewImage(const std::vector<unsigned char>& image, int width, int height) {
+//------------------------------------------------------------------------------
+// Kernel 2: Border Merging
+//------------------------------------------------------------------------------
+__global__ void borderMerging(
+    const bool* input,
+    unsigned* labels,
+    int width,
+    int height,
+    int pitch)
+{
+    // Each thread processes one pixel on a horizontal border
+    int row = blockIdx.y * BLOCK_HEIGHT - 1; // Border row (bottom of previous strip)
+    int col = blockIdx.x * BLOCK_WIDTH + threadIdx.x;
+    
+    // Skip the first strip since it has no upper neighbor
+    if (blockIdx.y == 0 || row >= height - 1 || col >= width) {
+        return;
+    }
+    
+    // Get the pixel values and labels for current and next row
+    bool currentPixel = (input[row * pitch + col] > 0);
+    bool nextPixel = (input[(row + 1) * pitch + col] > 0);
+    
+    // Only process if both pixels are set (part of a component)
+    if (currentPixel && nextPixel) {
+        unsigned currentLabel = labels[row * width + col];
+        unsigned nextLabel = labels[(row + 1) * width + col];
+        
+        // Merge the labels
+        unionLabels(labels, currentLabel, nextLabel);
+    }
+}
+
+//------------------------------------------------------------------------------
+// Kernel 3: Relabeling / Features Computation
+//------------------------------------------------------------------------------
+__global__ void relabelingAndFeatures(
+    unsigned* output,
+    const bool* input,
+    unsigned* labels,
+    unsigned* features, // Array to store component features (area, bounding box, etc.)
+    int width,
+    int height,
+    int pitch)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if (row >= height || col >= width) {
+        return;
+    }
+    
+    // Get the pixel value
+    unsigned char pixelValue = input[row * pitch + col];
+    
+    // Process only set pixels
+    if (pixelValue > 0) {
+        // Get the pixel's label
+        unsigned label = labels[row * width + col];
+        
+        // Find the representative label
+        unsigned rootLabel = find(labels, label);
+        //printf("label: %d, rootLabel: %d, (%d, %d)\n", label, rootLabel, row, col);
+        
+        // Update the label
+        labels[row * width + col] = rootLabel;
+        
+        // Write the final label to the output image (normalized to visible range)
+        output[row * pitch + col] = (rootLabel % 255) + 1;
+        
+        // Update component features (example: counting area using atomic add)
+        atomicAdd(&features[rootLabel * 4 + 0], 1); // Area
+        
+        // Update bounding box (using atomic min/max)
+        atomicMin(&features[rootLabel * 4 + 1], col); // Min X
+        atomicMax(&features[rootLabel * 4 + 2], col); // Max X
+        atomicMin(&features[rootLabel * 4 + 3], row); // Min Y
+        atomicMax(&features[rootLabel * 4 + 4], row); // Max Y
+    } else {
+        // Background pixels get zero
+        output[row * pitch + col] = 0;
+    }
+}
+
+void previewImage(const std::vector<bool>& image, int width, int height) {
     std::cout << "Image Preview:\n";
     
     int step_y = std::max(1, height / 64);
@@ -174,7 +274,7 @@ void previewImage(const std::vector<unsigned char>& image, int width, int height
 int main() {
 
     int width, height;
-    std::vector<unsigned char> h_input = loadPGM("test_input.pgm", width, height);
+    std::vector<bool> h_input = loadPGM("test_input.pgm", width, height);
     if (h_input.empty()) {
         return 1; // Error loading file
     }
@@ -182,8 +282,10 @@ int main() {
     previewImage(h_input, width, height);
 
     // Allocate device memory and copy input data
-    thrust::device_vector<unsigned char> d_input = h_input;
+    thrust::device_vector<bool> d_input = h_input;
     thrust::device_vector<unsigned> d_labels(width * height, 0);
+
+    thrust::device_vector<unsigned> d_output(width * height);
 
     // Launch CUDA kernel
     dim3 blocks((width + BLOCK_WIDTH - 1) / BLOCK_WIDTH, (height + BLOCK_HEIGHT - 1) / BLOCK_HEIGHT);
@@ -196,7 +298,47 @@ int main() {
                                        thrust::raw_pointer_cast(d_labels.data()),
                                        width, height, width);
 
+    
+    
+
+    // Allocate memory for component features (assuming max components = width*height/4)
+    // Each component stores: [area, min_x, max_x, min_y, max_y]
+    thrust::device_vector<unsigned> d_features(width * height * 5, 0);
+    
+    
+    // Grid and block dimensions for border merging
+    dim3 borderBlock(BLOCK_WIDTH, 1);
+    dim3 borderGrid((width + BLOCK_WIDTH - 1) / BLOCK_WIDTH, (height + BLOCK_HEIGHT - 1) / BLOCK_HEIGHT);
+    
+    // Grid and block dimensions for relabeling
+    dim3 relabelBlock(16, 16);
+    dim3 relabelGrid((width + 16 - 1) / 16, (height + 16 - 1) / 16);
+    
+    // Run the kernels
+    
+    borderMerging<<<borderGrid, borderBlock>>>(thrust::raw_pointer_cast(d_input.data()), thrust::raw_pointer_cast(d_labels.data()), width, height, width);
+
+    // Wait for GPU to finish
+    cudaDeviceSynchronize();
+
     thrust::host_vector<unsigned> h_labels = d_labels;
+    
+
+    relabelingAndFeatures<<<relabelGrid, relabelBlock>>>(
+        thrust::raw_pointer_cast(d_output.data()), thrust::raw_pointer_cast(d_input.data()), 
+        thrust::raw_pointer_cast(d_labels.data()),
+        thrust::raw_pointer_cast(d_features.data()),
+        width, height, width);
+    
+    thrust::host_vector<unsigned> h_output = d_output;
+    
+
+    for (int i=0;i<height;++i) {
+        for (int j=0;j<width;++j) {
+            std::cout<<h_labels[i*width + j]<<", ";
+        }
+        std::cout<<std::endl;
+    }
     
     
     return 0;
