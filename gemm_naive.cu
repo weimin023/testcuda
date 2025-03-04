@@ -147,9 +147,9 @@ int main() {
     cudaEventRecord(start, 0);
 
     for (int i=0;i<trials;++i) {
-        gemm_naive<<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
+        //gemm_naive<<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
         //gemm_shared<32><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
-        //gemm_shared_transposed<32><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
+        gemm_shared_transposed<32><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
     }
 
     cudaError_t err = cudaGetLastError();

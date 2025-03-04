@@ -137,5 +137,11 @@ target_link_libraries(test_transpose ${CUDA_LIBRARIES})
 add_executable(test_ldmatrix test_ldmatrix.cu)
 target_link_libraries(test_ldmatrix ${CUDA_LIBRARIES})
 
+add_executable(test_ccl1 test_ccl1.cu)
+target_link_libraries(test_ccl1 ${CUDA_LIBRARIES})
+
+add_executable(test_ccl2 test_ccl2.cu)
+target_link_libraries(test_ccl2 ${CUDA_LIBRARIES})
+
 include(GoogleTest)
 gtest_discover_tests(unittest)
