@@ -143,5 +143,11 @@ target_link_libraries(test_ccl1 ${CUDA_LIBRARIES})
 add_executable(test_ccl2 test_ccl2.cu)
 target_link_libraries(test_ccl2 ${CUDA_LIBRARIES})
 
+add_executable(test_ballot test_ballot.cu)
+target_link_libraries(test_ballot ${CUDA_LIBRARIES})
+
+add_executable(test_atomic test_atomic.cu)
+target_link_libraries(test_atomic ${CUDA_LIBRARIES})
+
 include(GoogleTest)
 gtest_discover_tests(unittest)

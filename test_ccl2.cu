@@ -157,7 +157,12 @@ __global__ void stripLabeling(
         } else {
             // This pixel is part of an existing segment
             // Get the label from the start pixel of the segment
-            temp_labels[warpId][tid] = temp_labels[warpId][tid - startDist];
+            unsigned startLabel = temp_labels[warpId][tid - startDist];
+            temp_labels[warpId][tid] = startLabel;
+            
+            // Merge current pixel's label with the start pixel's label
+            unsigned currentLabel = row * width + col;
+            unionLabels(labels, startLabel, currentLabel);
         }
     } else {
         // For non-set pixels, assign invalid label
@@ -176,32 +181,50 @@ __global__ void stripLabeling(
 // Kernel 2: Border Merging
 //------------------------------------------------------------------------------
 __global__ void borderMerging(
-    const bool* input,
-    unsigned* labels,
-    int width,
-    int height,
-    int pitch)
-{
-    // Each thread processes one pixel on a horizontal border
-    int row = blockIdx.y * BLOCK_HEIGHT - 1; // Border row (bottom of previous strip)
-    int col = blockIdx.x * BLOCK_WIDTH + threadIdx.x;
+    const bool* input,    // 輸入二進制圖像
+    unsigned* labels,     // 標籤數組
+    int width,            // 圖像寬度
+    int height,           // 圖像高度
+    int pitch             // 圖像pitch
+) {
+    // 使用二維網格和塊
+    int y = blockIdx.y;   // 當前條帶的 y 座標
     
-    // Skip the first strip since it has no upper neighbor
-    if (blockIdx.y == 0 || row >= height - 1 || col >= width) {
-        return;
-    }
+    // 只處理非第一個條帶的邊界
+    if (y == 0) return;
     
-    // Get the pixel values and labels for current and next row
-    bool currentPixel = (input[row * pitch + col] > 0);
-    bool nextPixel = (input[(row + 1) * pitch + col] > 0);
+    // 計算上一個條帶底部的行
+    int last_row_bottom = y * blockDim.y * BLOCK_HEIGHT - 1;
     
-    // Only process if both pixels are set (part of a component)
-    if (currentPixel && nextPixel) {
-        unsigned currentLabel = labels[row * width + col];
-        unsigned nextLabel = labels[(row + 1) * width + col];
+    // 確保不超出圖像高度
+    if (last_row_bottom >= height - 1) return;
+    
+    // 每個線程處理一列
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    if (col >= width) return;
+    
+    // 獲取當前列上下兩行的像素值
+    int kyx_prev = last_row_bottom * width + col;
+    int kyx = (last_row_bottom + 1) * width + col;
+    
+    // 使用 __ballot_sync 檢查這兩行的像素值
+    uint32_t pyx_prev = __ballot_sync(0xFFFFFFFF, input[kyx_prev] > 0);
+    uint32_t pyx = __ballot_sync(0xFFFFFFFF, input[kyx] > 0);
+    
+    
+    // 如果上下兩行都有像素
+    if (pyx && pyx_prev) {
+        // 計算像素的起始距離
+        int s_dist_y_prev = start_distance(pyx_prev, threadIdx.x);
+        int s_dist_y = start_distance(pyx, threadIdx.x);
         
-        // Merge the labels
-        unionLabels(labels, currentLabel, nextLabel);
+        
+        // 如果是段的開始
+        if (s_dist_y == 0 || s_dist_y_prev == 0) {
+            // 合併標籤
+            printf("(%d, %d), curr: %d, next: %d\n", last_row_bottom, col, kyx - s_dist_y, kyx_prev - s_dist_y_prev);
+            unionLabels(labels, kyx - s_dist_y, kyx_prev - s_dist_y_prev);
+        }
     }
 }
 
@@ -256,6 +279,54 @@ __global__ void relabelingAndFeatures(
     }
 }
 
+__global__ void relabelingKernel(
+    const bool* input,
+    unsigned* labels, 
+    int width, 
+    int height)
+{
+    // 計算全局索引
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    
+    // 邊界檢查，防止訪問非法記憶體
+    if (x >= width || y >= height) return;
+    
+    // 計算 1D 索引
+    unsigned ky_x = y * width + x;
+    if (ky_x >= width * height) return;  // 額外檢查
+    
+    // 讀取 pixel 標籤
+    unsigned py_x = labels[ky_x];
+    
+    // 確保 `py_x` 是 bool 值
+    unsigned pixels = __ballot_sync(0xFFFFFFFF, py_x != 0);
+    
+    // 計算距離
+    unsigned s_dist = start_distance(pixels, threadIdx.x);
+    s_dist = min(s_dist, threadIdx.x);  // 避免負數
+
+    unsigned label;
+    
+    // Relabeling 過程
+    if (py_x && s_dist == 0) {
+        label = labels[ky_x];
+        
+        // 確保 `label` 在合法範圍內
+        while (label < width * height && label != labels[label]) {
+            label = labels[label];
+        }
+    }
+    
+    // 保證 `__shfl_sync` 參數合法
+    int src_lane = max(0, threadIdx.x - s_dist);
+    label = __shfl_sync(0xFFFFFFFF, label, src_lane);
+        
+    // 更新 labels
+    if (py_x) labels[ky_x] = label;
+}
+
+
 void previewImage(const std::vector<bool>& image, int width, int height) {
     std::cout << "Image Preview:\n";
     
@@ -294,6 +365,11 @@ int main() {
     std::cout<<"blocks size: "<<blocks.x<<", "<<blocks.y<<std::endl;
     std::cout<<"threads size: "<<threads.x<<", "<<threads.y<<std::endl;
 
+    // Wait for GPU to finish
+    cudaDeviceSynchronize();
+
+    thrust::host_vector<unsigned> h_labels = d_labels;
+    
     stripLabeling<<<blocks, threads>>>(thrust::raw_pointer_cast(d_input.data()),
                                        thrust::raw_pointer_cast(d_labels.data()),
                                        width, height, width);
@@ -316,20 +392,22 @@ int main() {
     
     // Run the kernels
     
+    
     borderMerging<<<borderGrid, borderBlock>>>(thrust::raw_pointer_cast(d_input.data()), thrust::raw_pointer_cast(d_labels.data()), width, height, width);
 
-    // Wait for GPU to finish
-    cudaDeviceSynchronize();
-
-    thrust::host_vector<unsigned> h_labels = d_labels;
+    
     
 
-    relabelingAndFeatures<<<relabelGrid, relabelBlock>>>(
+    /*relabelingAndFeatures<<<relabelGrid, relabelBlock>>>(
         thrust::raw_pointer_cast(d_output.data()), thrust::raw_pointer_cast(d_input.data()), 
         thrust::raw_pointer_cast(d_labels.data()),
         thrust::raw_pointer_cast(d_features.data()),
-        width, height, width);
+        width, height, width);*/
     
+    relabelingKernel<<<relabelGrid, relabelBlock>>>(thrust::raw_pointer_cast(d_input.data()), thrust::raw_pointer_cast(d_labels.data()), width, height);
+    
+    
+
     thrust::host_vector<unsigned> h_output = d_output;
     
 
