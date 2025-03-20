@@ -1,4 +1,5 @@
 #include <iostream>
+#include <cuda/atomic>
 #include <cuda_runtime.h>
 
 __global__ void batch_naive_atomic_countOnesKernel(const int* input, int* result, int size) {
@@ -6,12 +7,19 @@ __global__ void batch_naive_atomic_countOnesKernel(const int* input, int* result
     int n_iter = size/32/n_warp;
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
+    int reg_cnt = 0;
+
     for (int itr = 0; itr < n_iter; ++itr) {
         int curr_tid = blockDim.x * itr + tid;
 
-        if (input[curr_tid] == 1) {
-            atomicAdd(result, 1);
+        if (curr_tid < size && input[curr_tid] == 1) {
+            reg_cnt++;
         }
+    }
+
+    if (reg_cnt > 0) {
+        cuda::atomic_ref<int, cuda::thread_scope_device> atomic_res(*result);
+        atomic_res.fetch_add(reg_cnt, cuda::memory_order_relaxed);
     }
 }
 
