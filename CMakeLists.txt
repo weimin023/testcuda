@@ -152,5 +152,8 @@ target_link_libraries(test_atomic ${CUDA_LIBRARIES})
 add_executable(test_float4 test_float4.cu)
 target_link_libraries(test_float4 ${CUDA_LIBRARIES})
 
+add_executable(test_histogram test_histogram.cu)
+target_link_libraries(test_histogram ${CUDA_LIBRARIES})
+
 include(GoogleTest)
 gtest_discover_tests(unittest)
