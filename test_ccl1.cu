@@ -17,7 +17,7 @@ void createTestPattern(std::vector<unsigned char>& image, int width, int height)
         }
     }
     
-    // Shape 2: L-shape in the top-right corner
+    /*// Shape 2: L-shape in the top-right corner
     for (int row = 10; row < 30; row++) {
         for (int col = 45; col < 55; col++) {
             image[row * width + col] = 255;
@@ -27,7 +27,7 @@ void createTestPattern(std::vector<unsigned char>& image, int width, int height)
         for (int col = 55; col < 60; col++) {
             image[row * width + col] = 255;
         }
-    }
+    }*/
     
     // Shape 3: Circle in the bottom-left corner
     int centerX = 15;
@@ -43,7 +43,7 @@ void createTestPattern(std::vector<unsigned char>& image, int width, int height)
         }
     }
     
-    // Shape 4: Cross in the bottom-right corner
+    /*// Shape 4: Cross in the bottom-right corner
     for (int row = 40; row < 60; row++) {
         for (int col = 30; col < 34; col++) {
             image[row * width + col] = 255;
@@ -53,7 +53,7 @@ void createTestPattern(std::vector<unsigned char>& image, int width, int height)
         for (int col = 25; col < 40; col++) {
             image[row * width + col] = 255;
         }
-    }
+    }*/
 }
 
 
@@ -107,7 +107,7 @@ void previewImage(const std::vector<unsigned char>& image, int width, int height
 
 int main() {
     // Define image dimensions
-    int width = 64;
+    int width = 32;
     int height = 64;
     
     // Create the test image

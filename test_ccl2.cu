@@ -20,7 +20,7 @@ __device__ unsigned end_distance(unsigned pixels, unsigned tx) {
 }
 
 // Build bitmask of pixels in a warp
-__device__ unsigned buildBitmask(int value, int tid) {
+__device__ unsigned buildBitmask(int value, int laneId) {
     // Use ballot_sync to create a bitmask where each bit represents a thread's predicate
     return __ballot_sync(0xFFFFFFFF, value);
 }
@@ -104,228 +104,120 @@ std::vector<bool> loadPGM(const std::string& filename, int& width, int& height) 
 //------------------------------------------------------------------------------
 // Kernel 1: Strip Labeling
 //------------------------------------------------------------------------------
-__global__ void stripLabeling(
-    const bool* input,
-    unsigned* labels,
-    int width,
-    int height,
-    int pitch)
+__global__ void stripLabeling(const bool* input, unsigned* labels, int width, int height, int pitch)
 {
-    // Each block processes a horizontal strip of 4 rows
+    __shared__ unsigned bitmasks[BLOCK_HEIGHT];
+    //__shared__ unsigned shared_labels[BLOCK_HEIGHT * ];
+
     int blockStartRow = blockIdx.y * BLOCK_HEIGHT;
     int row = blockStartRow + threadIdx.y;
-    int col = blockIdx.x * BLOCK_WIDTH + threadIdx.x;
+    int col = blockIdx.x * BLOCK_WIDTH + threadIdx.x;                                             // ky,x
     
-    // Out of bounds check
-    if (row >= height || col >= width) {
-        return;
-    }
+    if (row >= height || col >= width) return;
     
-    // Thread ID within the warp
-    int tid = threadIdx.x;
+    int laneId = threadIdx.x;
     int warpId = threadIdx.y;
     
-    // Shared memory for the bitmasks and temporary labels
-    __shared__ unsigned bitmasks[BLOCK_HEIGHT];
-    __shared__ unsigned temp_labels[BLOCK_HEIGHT][BLOCK_WIDTH];
-    
-    // Get the pixel value (0 or 1)
-    unsigned char pixelValue = (col < width && row < height) ? input[row * pitch + col] > 0 : 0;
-    
-    // Build the bitmask for the current warp
-    unsigned warpBitmask = buildBitmask(pixelValue, tid);
-    
-    // Store the bitmask in shared memory (only the first thread in each warp)
-    if (tid == 0) {
+    bool pixelValue = (col < width && row < height) ? input[row * pitch + col] > 0 : 0;           // py,x
+    unsigned warpBitmask = __ballot_sync(0xFFFFFFFF, pixelValue);                                 // pixels_y
+    unsigned startDist = start_distance(warpBitmask, laneId);                                     // s_dist_y
+
+    if (pixelValue && (startDist == 0)) {
+        int idx = row * width + col;
+        labels[idx] = idx;
+    }
+
+    if (laneId == 0) {
         bitmasks[warpId] = warpBitmask;
     }
-    
     __syncthreads();
-    
-    // Process only set pixels
-    if (pixelValue) {
-        unsigned startDist = start_distance(bitmasks[warpId], tid);
-        
-        // If this pixel is the start of a segment (startDist == 0)
-        if (startDist == 0) {
-            // Assign a new label based on global position
-            unsigned label = row * width + col;
-            temp_labels[warpId][tid] = label;
-            
-            // Initialize the label in the union-find data structure
-            labels[label] = label;
-        } else {
-            // This pixel is part of an existing segment
-            // Get the label from the start pixel of the segment
-            unsigned startLabel = temp_labels[warpId][tid - startDist];
-            temp_labels[warpId][tid] = startLabel;
-            
-            // Merge current pixel's label with the start pixel's label
-            unsigned currentLabel = row * width + col;
-            unionLabels(labels, startLabel, currentLabel);
-        }
-    } else {
-        // For non-set pixels, assign invalid label
-        temp_labels[warpId][tid] = UINT_MAX;
-    }
-    
-    __syncthreads();
-    
-    // Write the labels to global memory for set pixels
-    if (pixelValue) {
-        labels[row * width + col] = temp_labels[warpId][tid];
-    }
-}
 
-//------------------------------------------------------------------------------
-// Kernel 2: Border Merging
-//------------------------------------------------------------------------------
-__global__ void borderMerging(
-    const bool* input,    // 輸入二進制圖像
-    unsigned* labels,     // 標籤數組
-    int width,            // 圖像寬度
-    int height,           // 圖像高度
-    int pitch             // 圖像pitch
-) {
-    // 使用二維網格和塊
-    int y = blockIdx.y;   // 當前條帶的 y 座標
-    
-    // 只處理非第一個條帶的邊界
-    if (y == 0) return;
-    
-    // 計算上一個條帶底部的行
-    int last_row_bottom = y * blockDim.y * BLOCK_HEIGHT - 1;
-    
-    // 確保不超出圖像高度
-    if (last_row_bottom >= height - 1) return;
-    
-    // 每個線程處理一列
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    if (col >= width) return;
-    
-    // 獲取當前列上下兩行的像素值
-    int kyx_prev = last_row_bottom * width + col;
-    int kyx = (last_row_bottom + 1) * width + col;
-    
-    // 使用 __ballot_sync 檢查這兩行的像素值
-    uint32_t pyx_prev = __ballot_sync(0xFFFFFFFF, input[kyx_prev] > 0);
-    uint32_t pyx = __ballot_sync(0xFFFFFFFF, input[kyx] > 0);
-    
-    
-    // 如果上下兩行都有像素
-    if (pyx && pyx_prev) {
-        // 計算像素的起始距離
-        int s_dist_y_prev = start_distance(pyx_prev, threadIdx.x);
-        int s_dist_y = start_distance(pyx, threadIdx.x);
+    if (warpId > 0) {
+        bool pixelValue_last_y = input[(row - 1) * pitch + col] > 0;                             // py-1,x
+        unsigned warpBitmask_last_y = bitmasks[warpId-1];                                        // pixels_y-1
+        unsigned startDist_last_y = start_distance(warpBitmask_last_y, laneId);                  // s_dist_y-1
         
-        
-        // 如果是段的開始
-        if (s_dist_y == 0 || s_dist_y_prev == 0) {
-            // 合併標籤
-            printf("(%d, %d), curr: %d, next: %d\n", last_row_bottom, col, kyx - s_dist_y, kyx_prev - s_dist_y_prev);
-            unionLabels(labels, kyx - s_dist_y, kyx_prev - s_dist_y_prev);
+        if (pixelValue && pixelValue_last_y && (startDist == 0 || startDist_last_y == 0)) {
+            unsigned label1 = row * width + col - startDist;
+            unsigned label2 = (row-1) * width + col - startDist_last_y;
+            unionLabels(labels, label1, label2);
         }
     }
+    //__syncthreads();
+
+    
+
 }
 
-//------------------------------------------------------------------------------
-// Kernel 3: Relabeling / Features Computation
-//------------------------------------------------------------------------------
-__global__ void relabelingAndFeatures(
-    unsigned* output,
-    const bool* input,
-    unsigned* labels,
-    unsigned* features, // Array to store component features (area, bounding box, etc.)
-    int width,
-    int height,
-    int pitch)
-{
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    
-    if (row >= height || col >= width) {
-        return;
-    }
-    
-    // Get the pixel value
-    unsigned char pixelValue = input[row * pitch + col];
-    
-    // Process only set pixels
-    if (pixelValue > 0) {
-        // Get the pixel's label
-        unsigned label = labels[row * width + col];
-        
-        // Find the representative label
-        unsigned rootLabel = find(labels, label);
-        //printf("label: %d, rootLabel: %d, (%d, %d)\n", label, rootLabel, row, col);
-        
-        // Update the label
-        labels[row * width + col] = rootLabel;
-        
-        // Write the final label to the output image (normalized to visible range)
-        output[row * pitch + col] = (rootLabel % 255) + 1;
-        
-        // Update component features (example: counting area using atomic add)
-        atomicAdd(&features[rootLabel * 4 + 0], 1); // Area
-        
-        // Update bounding box (using atomic min/max)
-        atomicMin(&features[rootLabel * 4 + 1], col); // Min X
-        atomicMax(&features[rootLabel * 4 + 2], col); // Max X
-        atomicMin(&features[rootLabel * 4 + 3], row); // Min Y
-        atomicMax(&features[rootLabel * 4 + 4], row); // Max Y
-    } else {
-        // Background pixels get zero
-        output[row * pitch + col] = 0;
-    }
-}
+__global__ void stripMergeRelabeling(const bool* input, unsigned* labels, int width, int height, int pitch) {
 
-__global__ void relabelingKernel(
-    const bool* input,
-    unsigned* labels, 
-    int width, 
-    int height)
-{
-    // 計算全局索引
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-    
-    // 邊界檢查，防止訪問非法記憶體
-    if (x >= width || y >= height) return;
-    
-    // 計算 1D 索引
-    unsigned ky_x = y * width + x;
-    if (ky_x >= width * height) return;  // 額外檢查
-    
-    // 讀取 pixel 標籤
-    unsigned py_x = labels[ky_x];
-    
-    // 確保 `py_x` 是 bool 值
-    unsigned pixels = __ballot_sync(0xFFFFFFFF, py_x != 0);
-    
-    // 計算距離
-    unsigned s_dist = start_distance(pixels, threadIdx.x);
-    s_dist = min(s_dist, threadIdx.x);  // 避免負數
+    __shared__ unsigned shared_labels[BLOCK_HEIGHT * BLOCK_WIDTH];
 
-    unsigned label;
+    int blockStartRow = blockIdx.y * BLOCK_HEIGHT;
+    int row = blockStartRow + threadIdx.y;
+    int col = blockIdx.x * BLOCK_WIDTH + threadIdx.x;                                             // ky,x
     
-    // Relabeling 過程
-    if (py_x && s_dist == 0) {
-        label = labels[ky_x];
-        
-        // 確保 `label` 在合法範圍內
-        while (label < width * height && label != labels[label]) {
+    if (row >= height || col >= width) return;
+    
+    int laneId = threadIdx.x;
+    int warpId = threadIdx.y;
+
+    shared_labels[warpId * WARP_SIZE + laneId] = labels[row * WARP_SIZE + col];
+    __syncthreads();
+
+    // strip merging
+    if (blockStartRow > 0) {
+        int ky = row * width + col;
+        int k_last_y = (row - 1) * width + col;
+
+        bool py = input[ky];
+        bool p_last_y = input[k_last_y];
+
+        unsigned warpBitmask = __ballot_sync(0xFFFFFFFF, py);
+        unsigned warpBitmask_last_y = __ballot_sync(0xFFFFFFFF, p_last_y);
+
+        if (py && p_last_y) {
+            unsigned startDist = start_distance(warpBitmask, laneId);
+            unsigned startDist_last_y = start_distance(warpBitmask_last_y, laneId);
+
+            if (startDist == 0 || startDist_last_y == 0) {
+                int global_label1 = ky - startDist;
+                int global_label2 = k_last_y - startDist_last_y;
+
+                //int shared_label1 = global_label1 - blockIdx.y * BLOCK_HEIGHT * WARP_SIZE;
+                //int shared_label2 = global_label2 - blockIdx.y * BLOCK_HEIGHT * WARP_SIZE;
+
+                int shared_label1 = threadIdx.y * BLOCK_WIDTH + (threadIdx.x - startDist);
+                int shared_label2 = (threadIdx.y - 1) * BLOCK_WIDTH + (threadIdx.x - startDist_last_y);
+
+
+                unionLabels(labels, ky - startDist, k_last_y - startDist_last_y);
+                if (warpId == 0) printf("shared (%d, %d), %d, %d\n", row, col, shared_labels[shared_label1], shared_label2);
+                if (warpId == 0) printf("global (%d, %d), %d, %d\n", row, col, global_label1, global_label2);
+            }
+            
+        }
+    }
+    __syncthreads();
+
+    // relabel
+    int ky = row * width + col;
+    bool py = input[ky];
+    unsigned pixel = __ballot_sync(0xFFFFFFFF, py);
+    unsigned s_dist = start_distance(pixel, laneId);
+    int label = 0;
+
+    if (py && (s_dist == 0)) {
+        label = labels[ky];
+
+        while (label != labels[label]) {
             label = labels[label];
         }
     }
-    
-    // 保證 `__shfl_sync` 參數合法
-    int src_lane = max(0, threadIdx.x - s_dist);
-    label = __shfl_sync(0xFFFFFFFF, label, src_lane);
-        
-    // 更新 labels
-    if (py_x) labels[ky_x] = label;
-}
 
+    label = __shfl_sync(0xFFFFFFFF, label, laneId - s_dist);
+    if (py) labels[ky] = label;
+}
 
 void previewImage(const std::vector<bool>& image, int width, int height) {
     std::cout << "Image Preview:\n";
@@ -365,17 +257,20 @@ int main() {
     std::cout<<"blocks size: "<<blocks.x<<", "<<blocks.y<<std::endl;
     std::cout<<"threads size: "<<threads.x<<", "<<threads.y<<std::endl;
 
-    // Wait for GPU to finish
-    cudaDeviceSynchronize();
-
-    thrust::host_vector<unsigned> h_labels = d_labels;
+    
     
     stripLabeling<<<blocks, threads>>>(thrust::raw_pointer_cast(d_input.data()),
                                        thrust::raw_pointer_cast(d_labels.data()),
                                        width, height, width);
 
-    
-    
+    stripMergeRelabeling<<<blocks, threads>>>(thrust::raw_pointer_cast(d_input.data()),
+                                              thrust::raw_pointer_cast(d_labels.data()),
+                                              width, height, width);
+
+    // Wait for GPU to finish
+    cudaDeviceSynchronize();
+
+    thrust::host_vector<unsigned> h_labels = d_labels;
 
     // Allocate memory for component features (assuming max components = width*height/4)
     // Each component stores: [area, min_x, max_x, min_y, max_y]
@@ -393,7 +288,7 @@ int main() {
     // Run the kernels
     
     
-    borderMerging<<<borderGrid, borderBlock>>>(thrust::raw_pointer_cast(d_input.data()), thrust::raw_pointer_cast(d_labels.data()), width, height, width);
+    //borderMerging<<<borderGrid, borderBlock>>>(thrust::raw_pointer_cast(d_input.data()), thrust::raw_pointer_cast(d_labels.data()), width, height, width);
 
     
     
@@ -404,7 +299,7 @@ int main() {
         thrust::raw_pointer_cast(d_features.data()),
         width, height, width);*/
     
-    relabelingKernel<<<relabelGrid, relabelBlock>>>(thrust::raw_pointer_cast(d_input.data()), thrust::raw_pointer_cast(d_labels.data()), width, height);
+    //relabelingKernel<<<relabelGrid, relabelBlock>>>(thrust::raw_pointer_cast(d_input.data()), thrust::raw_pointer_cast(d_labels.data()), width, height);
     
     
 
