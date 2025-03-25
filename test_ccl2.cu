@@ -143,62 +143,49 @@ __global__ void stripLabeling(const bool* input, unsigned* labels, int width, in
             unionLabels(labels, label1, label2);
         }
     }
-    //__syncthreads();
+    __syncthreads();
 
+    if (blockIdx.y == 0) {
+        for (int blk = 1; blk < height/BLOCK_HEIGHT; ++blk) {
+            int row = blk * BLOCK_HEIGHT + threadIdx.y;
+            int col = threadIdx.x;
+
+            int ky = row * width + col;
+            int k_last_y = (row - 1) * width + col;
+
+            bool py = input[ky];
+            bool p_last_y = input[k_last_y];
+
+            unsigned warpBitmask = __ballot_sync(0xFFFFFFFF, py);
+            unsigned warpBitmask_last_y = __ballot_sync(0xFFFFFFFF, p_last_y);
+
+            if (py && p_last_y) {
+                unsigned startDist = start_distance(warpBitmask, laneId);
+                unsigned startDist_last_y = start_distance(warpBitmask_last_y, laneId);
     
+                if (startDist == 0 || startDist_last_y == 0) {
+                    int global_label1 = ky - startDist;
+                    int global_label2 = k_last_y - startDist_last_y;
+    
+                    unionLabels(labels, global_label1, global_label2);
+                    
+                }
+                
+            }
+        }
+    }
 
 }
 
 __global__ void stripMergeRelabeling(const bool* input, unsigned* labels, int width, int height, int pitch) {
 
-    __shared__ unsigned shared_labels[BLOCK_HEIGHT * BLOCK_WIDTH];
-
-    int blockStartRow = blockIdx.y * BLOCK_HEIGHT;
-    int row = blockStartRow + threadIdx.y;
+    int row = blockIdx.y * BLOCK_HEIGHT + threadIdx.y;
     int col = blockIdx.x * BLOCK_WIDTH + threadIdx.x;                                             // ky,x
     
     if (row >= height || col >= width) return;
     
     int laneId = threadIdx.x;
     int warpId = threadIdx.y;
-
-    shared_labels[warpId * WARP_SIZE + laneId] = labels[row * WARP_SIZE + col];
-    __syncthreads();
-
-    // strip merging
-    if (blockStartRow > 0) {
-        int ky = row * width + col;
-        int k_last_y = (row - 1) * width + col;
-
-        bool py = input[ky];
-        bool p_last_y = input[k_last_y];
-
-        unsigned warpBitmask = __ballot_sync(0xFFFFFFFF, py);
-        unsigned warpBitmask_last_y = __ballot_sync(0xFFFFFFFF, p_last_y);
-
-        if (py && p_last_y) {
-            unsigned startDist = start_distance(warpBitmask, laneId);
-            unsigned startDist_last_y = start_distance(warpBitmask_last_y, laneId);
-
-            if (startDist == 0 || startDist_last_y == 0) {
-                int global_label1 = ky - startDist;
-                int global_label2 = k_last_y - startDist_last_y;
-
-                //int shared_label1 = global_label1 - blockIdx.y * BLOCK_HEIGHT * WARP_SIZE;
-                //int shared_label2 = global_label2 - blockIdx.y * BLOCK_HEIGHT * WARP_SIZE;
-
-                int shared_label1 = threadIdx.y * BLOCK_WIDTH + (threadIdx.x - startDist);
-                int shared_label2 = (threadIdx.y - 1) * BLOCK_WIDTH + (threadIdx.x - startDist_last_y);
-
-
-                unionLabels(labels, ky - startDist, k_last_y - startDist_last_y);
-                if (warpId == 0) printf("shared (%d, %d), %d, %d\n", row, col, shared_labels[shared_label1], shared_label2);
-                if (warpId == 0) printf("global (%d, %d), %d, %d\n", row, col, global_label1, global_label2);
-            }
-            
-        }
-    }
-    __syncthreads();
 
     // relabel
     int ky = row * width + col;
