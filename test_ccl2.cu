@@ -104,10 +104,9 @@ std::vector<bool> loadPGM(const std::string& filename, int& width, int& height) 
 //------------------------------------------------------------------------------
 // Kernel 1: Strip Labeling
 //------------------------------------------------------------------------------
-__global__ void stripLabeling(const bool* input, unsigned* labels, int width, int height, int pitch)
+__global__ void stripLabelingMerging(const bool* input, unsigned* labels, int width, int height, int pitch)
 {
     __shared__ unsigned bitmasks[BLOCK_HEIGHT];
-    //__shared__ unsigned shared_labels[BLOCK_HEIGHT * ];
 
     int blockStartRow = blockIdx.y * BLOCK_HEIGHT;
     int row = blockStartRow + threadIdx.y;
@@ -177,7 +176,7 @@ __global__ void stripLabeling(const bool* input, unsigned* labels, int width, in
 
 }
 
-__global__ void stripMergeRelabeling(const bool* input, unsigned* labels, int width, int height, int pitch) {
+__global__ void stripRelabeling(const bool* input, unsigned* labels, int width, int height, int pitch) {
 
     int row = blockIdx.y * BLOCK_HEIGHT + threadIdx.y;
     int col = blockIdx.x * BLOCK_WIDTH + threadIdx.x;                                             // ky,x
@@ -246,11 +245,11 @@ int main() {
 
     
     
-    stripLabeling<<<blocks, threads>>>(thrust::raw_pointer_cast(d_input.data()),
+    stripLabelingMerging<<<blocks, threads>>>(thrust::raw_pointer_cast(d_input.data()),
                                        thrust::raw_pointer_cast(d_labels.data()),
                                        width, height, width);
 
-    stripMergeRelabeling<<<blocks, threads>>>(thrust::raw_pointer_cast(d_input.data()),
+    stripRelabeling<<<blocks, threads>>>(thrust::raw_pointer_cast(d_input.data()),
                                               thrust::raw_pointer_cast(d_labels.data()),
                                               width, height, width);
 
