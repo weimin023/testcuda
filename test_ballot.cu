@@ -7,7 +7,7 @@ __global__ void vote_ballot(int *a, unsigned int *b, int n) {
     int temp = a[tid];
     
     // 在 warp 內對 temp > 50 進行投票
-    unsigned int ballot_result = __ballot_sync(0xFFFFFFFF, temp > 50);
+    unsigned int ballot_result = __ballot_sync(0xFFFFFFFF, temp > 0);
     
     if (tid % 32 == 0) { // 讓 warp 的第一個線程存儲投票結果
         b[tid / 32] = ballot_result;
@@ -16,8 +16,10 @@ __global__ void vote_ballot(int *a, unsigned int *b, int n) {
 
 int main() {
     const int N = 32;
-    int h_a[N] = {10, 20, 30, 40, 50, 55, 60, 65, 70, 45, 42, 48, 35, 37, 28, 20, 
-                  15, 10, 5, 3, 1, 2, 8, 9, 7, 4, 6, 3, 55, 60, 12, 14};
+    int h_a[N] = {0, 1, 1, 1, 0, 0, 1, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0};
     unsigned int h_b[1] = {0};  // 一個 warp 只需要存一個 32-bit 結果
 
     int *d_a;

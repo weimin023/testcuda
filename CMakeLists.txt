@@ -161,5 +161,8 @@ target_link_libraries(opt_label_propagation ${CUDA_LIBRARIES})
 add_executable(test_clz test_clz.cu)
 target_link_libraries(test_clz ${CUDA_LIBRARIES})
 
+add_executable(test_warp_sfl test_warp_sfl.cu)
+target_link_libraries(test_warp_sfl ${CUDA_LIBRARIES})
+
 include(GoogleTest)
 gtest_discover_tests(unittest)
