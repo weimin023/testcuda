@@ -220,7 +220,7 @@ void previewImage(const std::vector<bool>& image, int width, int height) {
     }
 }
 
-int main() {
+/*int main() {
 
     int width, height;
     std::vector<bool> h_input = loadPGM("test_input.pgm", width, height);
@@ -261,34 +261,6 @@ int main() {
     // Allocate memory for component features (assuming max components = width*height/4)
     // Each component stores: [area, min_x, max_x, min_y, max_y]
     thrust::device_vector<unsigned> d_features(width * height * 5, 0);
-    
-    
-    // Grid and block dimensions for border merging
-    dim3 borderBlock(BLOCK_WIDTH, 1);
-    dim3 borderGrid((width + BLOCK_WIDTH - 1) / BLOCK_WIDTH, (height + BLOCK_HEIGHT - 1) / BLOCK_HEIGHT);
-    
-    // Grid and block dimensions for relabeling
-    dim3 relabelBlock(16, 16);
-    dim3 relabelGrid((width + 16 - 1) / 16, (height + 16 - 1) / 16);
-    
-    // Run the kernels
-    
-    
-    //borderMerging<<<borderGrid, borderBlock>>>(thrust::raw_pointer_cast(d_input.data()), thrust::raw_pointer_cast(d_labels.data()), width, height, width);
-
-    
-    
-
-    /*relabelingAndFeatures<<<relabelGrid, relabelBlock>>>(
-        thrust::raw_pointer_cast(d_output.data()), thrust::raw_pointer_cast(d_input.data()), 
-        thrust::raw_pointer_cast(d_labels.data()),
-        thrust::raw_pointer_cast(d_features.data()),
-        width, height, width);*/
-    
-    //relabelingKernel<<<relabelGrid, relabelBlock>>>(thrust::raw_pointer_cast(d_input.data()), thrust::raw_pointer_cast(d_labels.data()), width, height);
-    
-    
-
     thrust::host_vector<unsigned> h_output = d_output;
     
 
@@ -301,4 +273,4 @@ int main() {
     
     
     return 0;
-}
+}*/

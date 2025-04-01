@@ -71,13 +71,13 @@ include_directories(${gtest_SOURCE_DIR}/include ${gtest_SOURCE_DIR})
 #-----------------------------------------------#
 #                     openCV                    #
 #-----------------------------------------------#
-#find_package(OpenCV REQUIRED)
+find_package(OpenCV REQUIRED)
 
-#message(STATUS "OpenCV library status:" )
-#message(STATUS "    config: ${OpenCV_DIR}" )
-#message(STATUS "    version: ${OpenCV_VERSION}" )
-#message(STATUS "    include path: ${OpenCV_INCLUDE_DIRS}" )
-#include_directories(${OpenCV_INCLUDE_DIRS})
+message(STATUS "OpenCV library status:" )
+message(STATUS "    config: ${OpenCV_DIR}" )
+message(STATUS "    version: ${OpenCV_VERSION}" )
+message(STATUS "    include path: ${OpenCV_INCLUDE_DIRS}" )
+include_directories(${OpenCV_INCLUDE_DIRS})
 
 set(SOURCES
     unittest.cu
@@ -140,8 +140,8 @@ target_link_libraries(test_ldmatrix ${CUDA_LIBRARIES})
 add_executable(test_ccl1 test_ccl1.cu)
 target_link_libraries(test_ccl1 ${CUDA_LIBRARIES})
 
-add_executable(test_ccl2 test_ccl2.cu)
-target_link_libraries(test_ccl2 ${CUDA_LIBRARIES})
+#add_executable(test_ccl2 test_ccl2.cu)
+#target_link_libraries(test_ccl2 ${CUDA_LIBRARIES})
 
 add_executable(test_ballot test_ballot.cu)
 target_link_libraries(test_ballot ${CUDA_LIBRARIES})
@@ -163,6 +163,12 @@ target_link_libraries(test_clz ${CUDA_LIBRARIES})
 
 add_executable(test_warp_sfl test_warp_sfl.cu)
 target_link_libraries(test_warp_sfl ${CUDA_LIBRARIES})
+
+add_executable(test_ccl_opencv test_ccl_opencv.cpp)
+target_link_libraries(test_ccl_opencv ${OpenCV_LIBS})
+
+add_executable(test_ccl_opencv2 test_ccl_opencv2.cu)
+target_link_libraries(test_ccl_opencv2 ${OpenCV_LIBS} ${CUDA_LIBRARIES})
 
 include(GoogleTest)
 gtest_discover_tests(unittest)

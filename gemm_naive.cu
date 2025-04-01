@@ -52,6 +52,46 @@ template<int TILE_SIZE> __global__ void gemm_shared(float *dA, float *dB, float 
     if (row < M && col < N) {
         dC[row * N + col] = reg_tmp;
     }
+}
+
+template<int TILE_SIZE> __global__ void gemm_reg(const float *dA, const float *dB, float *dC, int M, int K, int N) {
+
+    int c = threadIdx.x;
+    int r = threadIdx.y;
+    
+    int col = threadIdx.x + blockIdx.x * blockDim.x;
+    int row = threadIdx.y + blockIdx.y * blockDim.y;
+
+    __shared__ float SA[TILE_SIZE][TILE_SIZE];
+    __shared__ float SB[TILE_SIZE][TILE_SIZE];
+
+    float reg_tile = 0;
+    for (int t = 0; t < K; t += TILE_SIZE) {
+
+        if (row < M && (t + c) < K) {
+            SA[r][c] = dA[row * K + (t + c)];
+        } else {
+            SA[r][c] = 0;
+        }
+
+        if ((t + r) < K && col < N) {
+            SB[r][c] = dB[(t + r) * N + col];
+        } else {
+            SB[r][c] = 0;
+        }
+        __syncthreads();
+
+        // accumulate sum
+        // global idx = i * N + j;
+        for (int k = 0; k < TILE_SIZE; ++k) {
+            reg_tile += SA[r][k] * SB[k][c];
+        }
+        __syncthreads();
+    }
+
+    if (row < M && col < N) {
+        dC[row * N + col] = reg_tile;
+    }
     
 }
 
@@ -137,7 +177,7 @@ int main() {
     thrust::device_vector<float> d_B = h_B;
     thrust::device_vector<float> d_C(matrixSize, 0.0);
 
-    dim3 threadNum(32, 32);
+    dim3 threadNum(8, 8);
     dim3 blockNum((m + threadNum.x - 1)/threadNum.x, (n + threadNum.y - 1)/threadNum.y);
 
     float ker_time = 0;
@@ -149,7 +189,8 @@ int main() {
     for (int i=0;i<trials;++i) {
         //gemm_naive<<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
         //gemm_shared<32><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
-        gemm_shared_transposed<32><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
+        //gemm_shared_transposed<32><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
+        gemm_reg<8><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
     }
 
     cudaError_t err = cudaGetLastError();
