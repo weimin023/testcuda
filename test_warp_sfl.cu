@@ -31,6 +31,44 @@ __global__ void warp_reduce(int *dest, const int *src, int N) {
             
 }
 
+template<typename T> __global__ void blockWarpReduce(T *dest, const T *src, int N) {
+    
+    extern __shared__ T shm[];
+
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    int local_tid = threadIdx.x;
+    int warpId = local_tid / WARP_SIZE;
+    int laneId = local_tid % WARP_SIZE;
+
+    T val = 0;
+    if (tid < N) {
+        val = src[tid];
+    }
+
+    for (int offset = WARP_SIZE/2; offset > 0; offset >>= 1) {
+        val += __shfl_down_sync(0xffffffff, val, offset);
+    }
+
+    if (laneId == 0) {
+        shm[warpId] = val;
+    }
+
+    __syncthreads();
+
+    if (warpId == 0) {
+        val = (local_tid < blockDim.x/WARP_SIZE) ? shm[laneId]:0;
+
+        for (int offset = WARP_SIZE/2; offset > 0; offset >>= 1) {
+            val += __shfl_down_sync(0xffffffff, val, offset);
+        }
+
+        if (laneId == 0) {
+            atomicAdd(dest, val);
+        }
+    }
+}
+
 __global__ void normal_reduce(int *dest, const int *src, int N) {
     int tid = threadIdx.x + blockDim.x * blockIdx.x;
     if (tid > N) return;
@@ -133,7 +171,11 @@ int main() {
     int *d_res_warp;
     cudaMalloc((void**)&d_res_warp, 1 * sizeof(int));
     cudaMemcpy(d_res_warp, &h_res_warp, 1 * sizeof(int), cudaMemcpyHostToDevice);
-    warp_reduce<<<1, 32>>>(d_res_warp, d_data, N);
+
+    int blockSize = 128;
+    int blkNum = (N + blockSize - 1) / blockSize;
+    int shared_mem_size = sizeof(int) * (blockSize / WARP_SIZE);
+    blockWarpReduce<int><<<blkNum, blockSize, shared_mem_size>>>(d_res_warp, d_data, N);
     cudaMemcpy(&h_res_warp, d_res_warp, sizeof(int), cudaMemcpyDeviceToHost);
     std::cout << "GPU Warp Result: " << h_res_warp << std::endl;
 
@@ -158,3 +200,6 @@ int main() {
     cudaMemcpy(&h_res_reg, d_res_reg, sizeof(int), cudaMemcpyDeviceToHost);
     std::cout << "GPU Reg Result: " << h_res_reg << std::endl;
 }
+
+
+

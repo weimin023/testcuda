@@ -33,7 +33,7 @@ cv::Mat ccl_opencv(const cv::Mat &src) {
 
     cv::Mat labels;
     int numComponents = cv::connectedComponents(src, labels, 4, CV_16U);
-    std::cout << "  Connected components (4-connectivity): " << numComponents - 1 << std::endl;
+    std::cout << "  opencv Connected components (4-connectivity): " << numComponents - 1 << std::endl;
 
     return labels;
 }
@@ -53,8 +53,8 @@ cv::Mat ccl_cuda(const cv::Mat &src) {
     dim3 blocks((c + BLOCK_WIDTH - 1) / BLOCK_WIDTH, (r + BLOCK_HEIGHT - 1) / BLOCK_HEIGHT);
     dim3 threads(BLOCK_WIDTH, BLOCK_HEIGHT);
 
-    std::cout<<"blocks size: "<<blocks.x<<", "<<blocks.y<<std::endl;
-    std::cout<<"threads size: "<<threads.x<<", "<<threads.y<<std::endl;
+    //std::cout<<"blocks size: "<<blocks.x<<", "<<blocks.y<<std::endl;
+    //std::cout<<"threads size: "<<threads.x<<", "<<threads.y<<std::endl;
 
     
     
@@ -79,7 +79,7 @@ cv::Mat ccl_cuda(const cv::Mat &src) {
             if (color_lut.find(label) != color_lut.end()) continue;
 
             color_lut[label] = cv::Vec3b(rand() % 200, rand() % 200, rand() % 200);
-            std::cout << cv::Vec3b(rand() % 200, rand() % 200, rand() % 200) << std::endl;
+            //std::cout << cv::Vec3b(rand() % 200, rand() % 200, rand() % 200) << std::endl;
         }
     }
 
@@ -107,7 +107,7 @@ cv::Mat ccl_cuda(const cv::Mat &src) {
 }
 
 int main() {
-    cv::Mat img1 = cv::imread("../ccl_testcases/ccl_test3_wide.png", cv::IMREAD_GRAYSCALE);
+    cv::Mat img1 = cv::imread("../ccl_testcases/ccl_test2_wide.png", cv::IMREAD_GRAYSCALE);
     
     cv::Mat trans;
     cv::transpose(img1, trans);
