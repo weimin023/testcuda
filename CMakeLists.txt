@@ -69,6 +69,12 @@ include_directories(${gtest_SOURCE_DIR}/include ${gtest_SOURCE_DIR})
 #endif()
 
 #-----------------------------------------------#
+#                   CUTLASS                     #
+#-----------------------------------------------#
+find_path(CUTLASS_INCLUDE_DIR cutlass/cutlass.h HINTS cutlass/include)
+find_path(CUTLASS_UTILS_INCLUDE_DIR cutlass/util/host_tensor.h HINTS cutlass/tools/util/include)
+
+#-----------------------------------------------#
 #                     openCV                    #
 #-----------------------------------------------#
 find_package(OpenCV REQUIRED)
@@ -169,6 +175,10 @@ target_link_libraries(test_ccl_opencv ${OpenCV_LIBS})
 
 add_executable(test_ccl_opencv2 test_ccl_opencv2.cu)
 target_link_libraries(test_ccl_opencv2 ${OpenCV_LIBS} ${CUDA_LIBRARIES})
+
+add_executable(test_cutlass test_cutlass.cu)
+target_include_directories(test_cutlass PRIVATE ${CUTLASS_INCLUDE_DIR} ${CUTLASS_UTILS_INCLUDE_DIR})
+target_compile_options(test_cutlass PRIVATE --expt-relaxed-constexpr)
 
 include(GoogleTest)
 gtest_discover_tests(unittest)
