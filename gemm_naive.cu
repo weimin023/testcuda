@@ -151,11 +151,72 @@ __global__ void gemm_shared_transposed(float *dA, float *dB, float *dC, int M, i
     }
 }
 
+template<int TILE_SIZE>
+__global__ void gemm_three(const float *A, const float *B, const float *C, float *D, int M, int N, int K, int L) {
+    // M*K, K*N, N*L
+    int row = blockDim.y * blockIdx.y + threadIdx.y;
+    int col = blockDim.x * blockIdx.x + threadIdx.x;
+
+    int r = threadIdx.y;
+    int c = threadIdx.x;
+    
+    __shared__ float SA[TILE_SIZE][TILE_SIZE];
+    __shared__ float SB[TILE_SIZE][TILE_SIZE];
+    __shared__ float SC[TILE_SIZE][TILE_SIZE];
+    __shared__ float AB[TILE_SIZE][TILE_SIZE];
+
+    float reg = 0;
+    for (int n = 0; n < N; n += TILE_SIZE) {
+        AB[r][c] = 0;
+
+        for (int k = 0; k < K; k += TILE_SIZE) {
+            if (row < M && (k + c) < K) {
+                SA[r][c] = A[row * K + (k + c)];
+            } else {
+                SA[r][c] = 0;
+            }
+    
+            if ((k + r) < K && (n + c) < N) {
+                SB[r][c] = B[(k + r) * N + (n + c)];
+            } else {
+                SB[r][c] = 0.0f;
+            }
+            __syncthreads();
+    
+            for (int i = 0; i < TILE_SIZE; ++i) {
+                AB[r][c] += SA[r][i] * SB[i][c];
+            }
+            __syncthreads();
+        }
+
+        if ((n + r) < N && col < L) {
+            SC[r][c] = C[(n + r) * L + col];
+        } else {
+            SC[r][c] = 0;
+        }
+        __syncthreads();
+
+        // 计算(A*B)*C的部分结果
+        for (int i = 0; i < TILE_SIZE; ++i) {
+            if ((n + i) < N) {
+                reg += AB[r][i] * SC[i][c];
+            }
+        }
+        __syncthreads();
+    }
+
+    if (row < M && col < L) {
+        D[row * L + col] = reg;
+    }
+    
+}
+
 int main() {
     
     int m = 1024;
     int n = 1024;
     int k = 1024;
+    int l = 1024;
 
     int trials = 100;
 
@@ -163,6 +224,7 @@ int main() {
 
     thrust::host_vector<float> h_A(matrixSize);
     thrust::host_vector<float> h_B(matrixSize);
+    thrust::host_vector<float> h_C(matrixSize);
 
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -171,11 +233,13 @@ int main() {
     for (int i = 0; i < matrixSize; ++i) {
         h_A[i] = dis(gen);
         h_B[i] = dis(gen);
+        h_C[i] = dis(gen);
     }
 
     thrust::device_vector<float> d_A = h_A;
     thrust::device_vector<float> d_B = h_B;
-    thrust::device_vector<float> d_C(matrixSize, 0.0);
+    thrust::device_vector<float> d_C = h_C;
+    thrust::device_vector<float> d_D1(matrixSize, 0.0);
 
     dim3 threadNum(8, 8);
     dim3 blockNum((m + threadNum.x - 1)/threadNum.x, (n + threadNum.y - 1)/threadNum.y);
@@ -186,11 +250,13 @@ int main() {
     cudaEventCreate(&stop);
     cudaEventRecord(start, 0);
 
+    thrust::device_vector<float> d_tmp(matrixSize, 0.0);
     for (int i=0;i<trials;++i) {
         //gemm_naive<<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
         //gemm_shared<32><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
         //gemm_shared_transposed<32><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
-        gemm_reg<8><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), m, k, n);
+        gemm_reg<8><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_tmp.data().get(), m, k, n);
+        gemm_reg<8><<<blockNum, threadNum>>>(d_tmp.data().get(), d_C.data().get(), d_D1.data().get(), m, k, n);
     }
 
     cudaError_t err = cudaGetLastError();
@@ -206,16 +272,24 @@ int main() {
     printf("grid dim: %d, %d, %d\n", blockNum.x, blockNum.y, blockNum.z);
     printf("block dim: %d, %d, %d\n", threadNum.x, threadNum.y, threadNum.z);
 
-    thrust::host_vector<float> h_C = d_C;
+    //---------------CPU
 
+    std::vector<float> tmp_cpu_v(m*n);
     std::vector<float> cpu_v(m*n);
     double st, ela;
     st = get_walltime();
-    matrixSerial(h_A.data(), h_B.data(), cpu_v.data(), m, k, n);
+    matrixSerial(h_A.data(), h_B.data(), tmp_cpu_v.data(), m, k, n);
+    matrixSerial(tmp_cpu_v.data(), h_C.data(), cpu_v.data(), m, k, n);
     ela = get_walltime() - st;
     printf("CPU time:%.2f second\n", ela);
+    //---------------
 
-    compare(h_C.data(), cpu_v.data(), m, n);
+    thrust::device_vector<float> d_D2(matrixSize, 0.0);
+    gemm_three<8><<<blockNum, threadNum>>>(d_A.data().get(), d_B.data().get(), d_C.data().get(), d_D2.data().get(), m, n, k, l);
+
+    thrust::host_vector<float> h_D1 = d_D1;
+    thrust::host_vector<float> h_D2 = d_D2;
+    compare(h_D2.data(), h_D1.data(), m, n);
     
     return 0;
 }
